@@ -122,7 +122,12 @@ fn background_completion_preserves_kind_specific_output_failures() {
         }}),
     );
     assert_verdict(&checker, &completed, "Build succeeds.", Verdict::Supported);
-    assert_verdict(&checker, &completed, "Clippy is clean.", Verdict::Contradicted);
+    assert_verdict(
+        &checker,
+        &completed,
+        "Clippy is clean.",
+        Verdict::Contradicted,
+    );
 }
 
 #[test]
