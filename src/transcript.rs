@@ -255,10 +255,8 @@ impl Parser<'_> {
                 let outcome = codex_exit(p.get("exit_code"));
                 self.codex_run(command, outcome, out);
             }
-            "patch_apply_end" => {
-                if p.get("success").and_then(Value::as_bool) != Some(false) {
-                    self.codex_edit(p.get("changes"));
-                }
+            "patch_apply_end" if p.get("success").and_then(Value::as_bool) != Some(false) => {
+                self.codex_edit(p.get("changes"));
             }
             _ => {}
         }
