@@ -25,8 +25,8 @@ pub enum Outcome {
 pub struct Run {
     pub command: String,
     pub outcome: Outcome,
-    /// Output matched the failure markers of a kind whose evidence matches this command.
-    pub output_failed: bool,
+    /// Kinds whose evidence matches this command and whose failure markers match its output.
+    pub output_failures: Vec<&'static str>,
 }
 
 #[derive(Debug, Clone)]
@@ -97,15 +97,22 @@ static NOTIFY_STATUS: LazyLock<Regex> =
 
 /// Per-kind evidence and failure-output regexes, compiled once by the caller.
 pub struct Markers {
-    pub kinds: Vec<(Regex, Option<Regex>)>,
+    pub kinds: Vec<(&'static str, Regex, Option<Regex>)>,
 }
 
 impl Markers {
-    pub fn output_failed(&self, command: &str, output: &str) -> bool {
+    pub fn output_failures(&self, command: &str, output: &str) -> Vec<&'static str> {
+        if output.is_empty() {
+            return vec![];
+        }
         let text = evidence_text(command);
-        self.kinds.iter().any(|(ev, fail)| {
-            ev.is_match(&text) && fail.as_ref().is_some_and(|f| f.is_match(output))
-        })
+        self.kinds
+            .iter()
+            .filter_map(|(name, ev, fail)| {
+                (ev.is_match(&text) && fail.as_ref().is_some_and(|f| f.is_match(output)))
+                    .then_some(*name)
+            })
+            .collect()
     }
 }
 
@@ -238,11 +245,11 @@ fn text_of(v: &Value) -> String {
 
 impl Parser<'_> {
     fn push_run(&mut self, command: String, outcome: Outcome, output: &str) -> usize {
-        let output_failed = !output.is_empty() && self.markers.output_failed(&command, output);
+        let output_failures = self.markers.output_failures(&command, output);
         self.s.steps.push(Step::Run(Run {
             command,
             outcome,
-            output_failed,
+            output_failures,
         }));
         self.s.steps.len() - 1
     }
@@ -345,10 +352,10 @@ impl Parser<'_> {
             Outcome::Ok
         };
         let command = self.run_mut(idx).command.clone();
-        let output_failed = self.markers.output_failed(&command, &out);
+        let output_failures = self.markers.output_failures(&command, &out);
         let r = self.run_mut(idx);
         r.outcome = outcome;
-        r.output_failed = output_failed;
+        r.output_failures = output_failures;
         if r.outcome != Outcome::Pending {
             self.pending.remove(id);
         }
@@ -553,6 +560,32 @@ pub fn turn_finals(lines: &[&str]) -> (&'static str, Vec<(usize, String)>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn output_failures_retain_matching_kind_names() {
+        let markers = Markers {
+            kinds: vec![
+                (
+                    "build",
+                    Regex::new("cargo clippy").unwrap(),
+                    Some(Regex::new("error").unwrap()),
+                ),
+                (
+                    "lint",
+                    Regex::new("cargo clippy").unwrap(),
+                    Some(Regex::new("warning|error").unwrap()),
+                ),
+                ("commit", Regex::new("git commit").unwrap(), None),
+            ],
+        };
+        assert_eq!(markers.output_failures("cargo clippy", "warning"), ["lint"]);
+        assert_eq!(
+            markers.output_failures("cargo clippy", "error"),
+            ["build", "lint"]
+        );
+        assert!(markers.output_failures("git commit", "error").is_empty());
+        assert!(markers.output_failures("cargo clippy", "").is_empty());
+    }
 
     #[test]
     fn segments_respect_quotes() {
