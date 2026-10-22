@@ -36,8 +36,8 @@ The kinds below are a closed set. Matching a command means a regex search over t
 
 | Kind | Example claims (EN / ZH) | Evidence command pattern | Failure-in-output markers |
 |---|---|---|---|
-| `test` | all tests pass, 42 passed, `cargo test` passes / 测试全部通过, 单测通过, 用例都过了 | `cargo test`, `cargo nextest`, `pytest`, `go test`, `bun test`, `npm/pnpm/yarn test`, `vitest`, `jest`, `mocha`, `make test`, `just test`, `mvn test`, `gradle test`, `swift test`, `xcodebuild test`, `rspec`, `phpunit`, `deno test`, `tox`, `nox` | `test result: FAILED`, `^FAILED`, `[1-9]\d* (failed\|failing)`, `--- FAIL`, `^FAIL\b`, `could not compile`, `error[E…]`, `collected 0 items`, `no tests ran`, `No tests found` |
-| `build` | build succeeds, compiles cleanly / 编译通过, 构建成功 | `cargo build\|check`, `go build`, `tsc`, `bun/npm/pnpm run build`, `make`, `xcodebuild`, `gradle build`, `mvn package\|compile`, `swift build`, `vite build`, `next build`, `uv build` | `error[E…]`, `^error(:\|\[)`, `could not compile`, `BUILD FAILED`, `Build failed`, `npm ERR!` |
+| `test` | all tests pass, 42 passed, `cargo test` passes / 测试全部通过, 单测通过, 用例都过了 | `cargo test`, `cargo nextest`, `pytest`, `go test`, `bun test`, `npm/pnpm/yarn test`, `vitest`, `jest`, `mocha`, `make test`, `just test`, `mvn test`, `gradle test`, `swift test`, `xcodebuild test`, `rspec`, `phpunit`, `deno test`, `tox`, `nox`, `ctest`, `unittest`, `rustc --test`. Also a project's own runner: an interpreter or shell executing a `test`/`verify` script (`python3 tools/verify.py`, `godot --script res://tests/x.gd`, `./scripts/test.sh`) | `test result: FAILED`, `^FAILED`, `[1-9]\d* (failed\|failing)`, `--- FAIL`, `^FAIL\b`, `could not compile`, `error[E…]`, `collected 0 items`, `no tests ran`, `No tests found` |
+| `build` | build succeeds, compiles cleanly / 编译通过, 构建成功, release 测试编译通过 | `cargo build\|check\|test\|clippy\|run\|bench`, `go build\|test\|vet\|run`, `tsc`, `bun/npm/pnpm run build`, `make`, `cmake --build`, `xcodebuild`, `gradle build`, `mvn package\|compile`, `swift build`, `vite build`, `next build`, `uv build`. Test, lint and run commands compile the code too | `error[E…]`, `^error(:\|\[)`, `could not compile`, `BUILD FAILED`, `Build failed`, `npm ERR!` |
 | `lint` | clippy is clean, lint passes, no warnings / lint 通过, clippy 无警告, 零警告 | `clippy`, `eslint`, `ruff check`, `golangci-lint`, `biome`, `go vet`, `shellcheck`, `*run lint`, `swiftlint`, `rubocop`, `flake8`, `pylint` | `generated [1-9]\d* warnings?`, `^error`, `[1-9]\d* problems?`, `Found [1-9]\d* errors?` |
 | `typecheck` | type check passes, no type errors, tsc is clean / 类型检查通过 | `tsc`, `mypy`, `pyright`, `cargo check`, `vue-tsc`, `*run typecheck` | `Found [1-9]\d* errors?`, `error TS\d+`, `^error` |
 | `format` | formatted with rustfmt, fmt check passes / 已格式化, 格式检查通过 | `cargo fmt`, `rustfmt`, `prettier`, `black`, `ruff format`, `gofmt`, `biome format`, `*run format\|fmt` | `Diff in`, `would reformat`, `[1-9]\d* files? would be` |
@@ -46,10 +46,10 @@ The kinds below are a closed set. Matching a command means a regex search over t
 
 | Kind | Example claims | Evidence |
 |---|---|---|
-| `commit` | committed, created a commit / 已提交 (unless followed by PR/issue/评论), 已 commit | `git commit` |
+| `commit` | committed, created a commit / 已提交, 已 commit. Not when the clause hands in something else (方案/计划/报告/排期已提交, 已提交 PR/评论), unless a commit hash follows | `git commit` |
 | `push` | pushed to origin / 已推送, 已 push, 推上去了 | `git push` |
 | `pr` | opened a PR, PR created / 已提交 PR, 已创建 PR, PR 已开 | `gh pr create`, MCP tool `*create_pull_request*` |
-| `deploy` | deployed to staging, published to npm / 已部署, 已发布, 已上线 | `vercel`, `fly deploy`, `wrangler deploy\|publish`, `kubectl apply\|rollout`, `helm upgrade\|install`, `terraform apply`, `docker push`, `npm/bun/cargo publish`, `twine upload`, `uv publish`, `gh release create`, `netlify deploy`, `firebase deploy`, `gcloud … deploy`, `railway up` |
+| `deploy` | deployed to staging, published to npm / 已部署, 已发布, 已上线. UNSUPPORTED only warns: real deploys mostly run from CI, ssh or a dashboard | `vercel`, `fly deploy`, `wrangler deploy\|publish`, `kubectl apply\|rollout`, `helm upgrade\|install`, `terraform apply`, `docker push`, `npm/bun/cargo publish`, `twine upload`, `uv publish`, `gh release create`, `netlify deploy`, `firebase deploy`, `gcloud … deploy`, `railway up` |
 
 Projects can add evidence patterns for their own commands, such as `./ci.sh` or `just check`. See the config section.
 
@@ -78,13 +78,27 @@ Let the candidates be the matching runs with an outcome other than `not_run`. Th
 | Last candidate `ok`, verification kind, a code edit after it | `STALE` | block |
 | Otherwise | `SUPPORTED` | allow |
 
+Before matching, the command text is normalised:
+
+- Segments that only read or print are dropped (`rg 'a|cargo test'`, `cat`, `grep`, `ps`, `git log/diff/status`). The split on `&&`, `||`, `;`, `|` and newline respects quotes.
+- A heredoc written to a file (`cat > run.sh <<EOF`) is dropped.
+- Quotes, commas and brackets become spaces, so a harness script's `subprocess.run(["cargo", "test"])` reads as `cargo test`.
+
 What counts as an edit:
 
 - Claude `Edit`, `Write`, `MultiEdit` and `NotebookEdit`
 - Codex `FileChange`
 - Bash `sed -i`, `perl -i`, `apply_patch`, `git apply` and `patch`
 
-Edits whose paths all end in `.md`, `.markdown`, `.txt`, `.rst` or `.adoc` are doc-only and do not make a run stale. The earlier exploration suggested making STALE only a warning. With doc edits excluded, a code edit after the last green run really does make "tests pass" unverified, so the default blocks. A config option turns STALE into a warning.
+An edit is non-code, and does not make a run stale, when every path it names ends in `.md`, `.markdown`, `.txt`, `.rst` or `.adoc`, or lies under a scratch directory (`/tmp/`, `/private/tmp/`, `/var/folders/`). For Bash edits, the paths are the file-like tokens of the command. The earlier exploration suggested making STALE only a warning. With doc edits excluded, a code edit after the last green run really does make "tests pass" unverified, so the default blocks. A config option turns STALE into a warning.
+
+**Unrecognised runners.** Replaying 1,920 real stops showed that most STALE and UNSUPPORTED verdicts on verification claims came from projects that verify through their own runners (Python harness scripts, built binaries, game engines). receipt cannot see those. So a STALE or UNSUPPORTED verdict on a verification kind is downgraded from block to warn when a successful command ran after the last code edit and that command:
+
+- matches no evidence rule;
+- is not read-only;
+- is not housekeeping (`git`, `gh`, `cd`, `cp`, `mv`, `rm`, `mkdir`, `ps`, `kill` and similar).
+
+The detail then names that step, so the user can see what may have done the verifying. CONTRADICTED is never downgraded, and neither is "nothing ran at all after the edit".
 
 Subagent transcripts (`subagents/*.jsonl`) are not merged into the main session. A main agent relaying a subagent's test run would be flagged. Each subagent is checked against its own transcript on `SubagentStop`. This is a known recall/precision trade-off, listed under limits.
 
@@ -119,9 +133,30 @@ Chinese post-negation is also checked right after the match: `不了`, `不过` 
 
 The bias is toward silence. A fuzzy sentence is not a claim. "Should pass now" is a promise, not a receipt. pinocchio, groundtruth and proof-of-done all draw the same line.
 
+**CI reports**: a clause that mentions CI (`CI`, `GitHub Actions`, `workflow run`, `流水线`, `构建日志`) makes no verification claim. A remote run is not this session's receipt.
+
+**English lists**: a negation carries over to later list items that start with `or` / `nor` / `and`. In "I haven't run the tests, or made a commit", no commit is claimed.
+
 ### Mixed language
 
-English and Chinese regexes both run on every clause. The `\b` boundaries are only used on the English side. Chinese text has no word boundaries, so the Chinese side uses fixed phrases ("测试…通过") with up to 8 filler characters (`[^，。,.]{0,8}`) between the subject and the verb. That covers "测试已全部通过" and "cargo test 全部通过".
+The English claim regexes run on every clause; `\b` boundaries only appear on the English side.
+
+Chinese verification claims (test, build, lint, typecheck, format) are matched differently, because real Chinese summaries enumerate several checks before one shared predicate: "格式、严格 Clippy、release 测试编译均通过". The matcher works like this:
+
+1. Find each predicate (`通过`, `成功`, `完成`, `无警告`, …, optionally after `均`/`全部`/`都`).
+2. Take the subject before it (after the last `：`) and split it into items on `、和及与或/`.
+3. Classify each item by keyword, in the order build → typecheck → lint → format → test. 测试编译 / 测试二进制构建 / libtest 构建 are builds, not test results.
+4. Check that the item's kind accepts that predicate. 测试完成 is not 测试通过.
+
+The whole enumeration is skipped in any of these cases:
+
+- the subject contains a negation (不等于编译、测试通过);
+- the subject contains a hedge;
+- the predicate is followed by a rate or a general statement (通过率, 通过不代表…, 通过后).
+
+Items naming a check but not a result (测试名核验, 测试注册检查, 格式解析, 构建准备) are skipped.
+
+Chinese action claims (commit, push, PR, deploy) stay as regexes.
 
 ## Feedback to the agent
 
@@ -146,7 +181,8 @@ Design choices:
 ### Loop control
 
 - First stop with missing receipts: block with exit 2 and the feedback on stderr. Claude Code and Codex both accept this.
-- The next stop in the same cycle (`stop_hook_active == true`): never block again. If claims are still unsupported, print `{"systemMessage": "receipt: still unverified: test, commit"}` on stdout and exit 0. The user sees it, and the agent stops. This is how the hook avoids nagging while staying visible.
+- The next stop in the same cycle (`stop_hook_active == true`): never block again. If claims are still unsupported, print `{"systemMessage": "receipt: still unverified: test (STALE), commit (UNSUPPORTED)"}` on stdout and exit 0. The user sees it, and the agent stops. This is how the hook avoids nagging while staying visible.
+- Findings that only warn (a STALE downgraded by an unrecognised runner, an unsupported deploy, `stale = "warn"`) print `receipt: unverified: …` the same way, without blocking.
 - Internal error (unreadable transcript, bad JSON): print a one-line `receipt: …` on stderr and exit 1. Both hosts show this as a non-blocking hook error. receipt never blocks on its own failure, and never passes silently either.
 
 ## Config and allowlist
@@ -182,15 +218,23 @@ Rejected (overdesign for v0.1): per-path ignore globs, per-claim ignore phrases,
 The hook must finish within 200 ms (p95) on the largest real transcript (102 MB).
 
 - **Fast path.** If the final text contains no claim keyword (a single prefilter regex), exit before opening the transcript. This is most stops.
-- **Line prefilter.** Only lines containing `"tool_use"`, `"tool_result"`, `task-notification`, `item_completed`, `exec_command_end` or `patch_apply_end` are JSON-parsed. Assistant-text lines are read only when the hook input has no `last_assistant_message`.
+- **Line prefilter.** Background-run notifications arrive in `queue-operation` and `attachment` records; their tags are read straight from the raw line. Only lines containing `"assistant"`, `"tool_result"`, `task-notification`, `item_completed`, `exec_command_end` or `patch_apply_end` are JSON-parsed. Assistant-text lines are read only when the hook input has no `last_assistant_message`.
 - **No allocation of outputs beyond need.** For each result, only the failure-marker scan runs over the output. Output text is not stored.
-- **Measurement.** Results go in the README, using `hyperfine`-style repeated runs on the largest local transcript, time measured by the binary.
+- **Measured** (20 runs each, M-series Mac, release build):
+
+| Transcript | With claim, p95 | No claim, p95 |
+|---|---|---|
+| 102.7 MB (largest) | 73.5 ms | 12.6 ms |
+| 14.4 MB (p90) | 22.6 ms | 12.9 ms |
+| 2.9 MB (median) | 19.1 ms | 12.5 ms |
+
+The roughly 12 ms floor is process start plus regex compilation.
 
 ## Evaluation
 
 Two sets, never merged into one headline number:
 
-1. **real**: candidate sentences from this machine's Claude Code and Codex sessions.
+1. **real**: candidate sentences from this machine's Claude Code and Codex sessions. Each run in the metadata is stored as the evidence-rule match text only (e.g. `cargo test`), plus whether it was a multi-line or looped script.
    - Candidates are sentences in final assistant messages that match a broad keyword net, which is wider than the detector.
    - Each candidate comes with redacted command metadata: normalised command (program and subcommand only, e.g. `cargo test`, `git commit`), outcome, failure-marker flag, background flag, and edits as `code`/`doc`.
    - Redaction: paths become `<path>`, URLs `<url>`, emails `<email>`, token-like strings `<secret>`, and the local user name is removed. No raw transcript lines are stored.
@@ -204,7 +248,15 @@ Scored separately for each set:
 
 Bias note: the local sessions run with vibeguard's "verify before claiming" rule, so unsupported claims are rarer than in the wild. That is why the synthetic set exists.
 
+The gate label is derived, not judged. It applies the evidence rules to the hand-labelled kinds. Gate P/R therefore measures how detection errors propagate, not whether the agent was honest. Whether a block is fair is measured separately by **replay**:
+
+- `examples/replay.rs` runs every turn-final message of the local sessions through the hook logic;
+- the blocked stops are then reviewed by hand. Results are in the README.
+
 ## Limits
+
+- Out of the box, receipt only knows common toolchains. Projects with their own runners should add them under `[evidence]`. Otherwise their claims get warnings, or blocks when nothing at all ran after the last edit.
+- A summary relayed from another session or a subagent ("Keepline: three fixes committed") has no receipt in this transcript and is blocked.
 
 - Regex detection has a recall ceiling. Unusual phrasings ("everything's green on my side") are missed by design.
 - Subagent evidence is not merged into the parent session.

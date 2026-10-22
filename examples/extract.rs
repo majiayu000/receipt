@@ -8,7 +8,7 @@
 //! whether each edit was code or docs. Labels are added by hand afterwards.
 
 use receipt::claims::sentences;
-use receipt::transcript::{parse_str, Outcome, Step};
+use receipt::transcript::{parse_str, turn_finals, Outcome, Step};
 use receipt::{Checker, Config};
 use regex::Regex;
 use serde_json::{json, Value};
@@ -30,7 +30,10 @@ struct Candidate {
 
 fn main() -> anyhow::Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    anyhow::ensure!(args.len() >= 3, "usage: extract <out.jsonl> <per-stratum> <transcript>...");
+    anyhow::ensure!(
+        args.len() >= 3,
+        "usage: extract <out.jsonl> <per-stratum> <transcript>..."
+    );
     let (out_path, per) = (&args[0], args[1].parse::<usize>()?);
     let checker = Checker::new(&Config::default())?;
     let broad = Regex::new(BROAD)?;
@@ -38,9 +41,11 @@ fn main() -> anyhow::Result<()> {
     let mut cands = vec![];
     let mut seen = HashSet::new();
     for file in &args[2..] {
-        let Ok(raw) = std::fs::read_to_string(file) else { continue };
+        let Ok(raw) = std::fs::read_to_string(file) else {
+            continue;
+        };
         let lines: Vec<&str> = raw.lines().collect();
-        let (host, finals) = finals(&lines);
+        let (host, finals) = turn_finals(&lines);
         for (upto, text) in finals {
             for s in sentences(&text) {
                 if s.chars().count() > 300 || !broad.is_match(&s) {
@@ -51,12 +56,22 @@ fn main() -> anyhow::Result<()> {
                     continue;
                 }
                 let detected = !checker.claims(&s).is_empty();
-                cands.push(Candidate { file: file.clone(), upto, sentence: red, detected, host });
+                cands.push(Candidate {
+                    file: file.clone(),
+                    upto,
+                    sentence: red,
+                    detected,
+                    host,
+                });
             }
         }
     }
     let (pos, neg): (Vec<&Candidate>, Vec<&Candidate>) = cands.iter().partition(|c| c.detected);
-    eprintln!("candidates: {} detected, {} broad-only", pos.len(), neg.len());
+    eprintln!(
+        "candidates: {} detected, {} broad-only",
+        pos.len(),
+        neg.len()
+    );
 
     let mut out = String::new();
     let mut n = 0;
@@ -86,52 +101,12 @@ fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Turn-final assistant messages and the line count they end at.
-fn finals(lines: &[&str]) -> (&'static str, Vec<(usize, String)>) {
-    let codex = lines.iter().take(5).any(|l| l.contains("\"payload\""));
-    let mut out = vec![];
-    let mut last: Option<(usize, String)> = None;
-    for (i, line) in lines.iter().enumerate() {
-        let Ok(v) = serde_json::from_str::<Value>(line) else { continue };
-        if codex {
-            if v.pointer("/payload/type").and_then(Value::as_str) == Some("task_complete") {
-                if let Some(t) = v.pointer("/payload/last_agent_message").and_then(Value::as_str) {
-                    out.push((i + 1, t.to_string()));
-                }
-            }
-            continue;
-        }
-        if v.get("isSidechain").and_then(Value::as_bool) == Some(true) {
-            continue;
-        }
-        match v.get("type").and_then(Value::as_str) {
-            Some("assistant") => {
-                let text: String = v
-                    .pointer("/message/content")
-                    .and_then(Value::as_array)
-                    .map(|a| a.iter().filter_map(|b| b.get("text").and_then(Value::as_str)).collect())
-                    .unwrap_or_default();
-                if !text.trim().is_empty() {
-                    last = Some((i + 1, text));
-                }
-            }
-            // A real prompt (string content, not a tool result or a notification) ends the turn.
-            Some("user") => {
-                let prompt = matches!(v.pointer("/message/content"), Some(Value::String(s)) if !s.contains("<task-notification>"));
-                if prompt && v.get("isMeta").and_then(Value::as_bool) != Some(true) {
-                    out.extend(last.take());
-                }
-            }
-            _ => {}
-        }
-    }
-    out.extend(last);
-    (if codex { "codex" } else { "claude" }, out)
-}
-
 /// Keep what decides a verdict: the last 5 evidence runs per kind and the edits after them.
 fn steps(steps: &[Step]) -> Vec<Value> {
-    let evidence: Vec<Regex> = receipt::rules::KINDS.iter().map(|k| Regex::new(k.evidence).unwrap()).collect();
+    let evidence: Vec<Regex> = receipt::rules::KINDS
+        .iter()
+        .map(|k| Regex::new(k.evidence).unwrap())
+        .collect();
     let mut keep = vec![false; steps.len()];
     for ev in &evidence {
         let idx: Vec<usize> = steps
@@ -157,13 +132,20 @@ fn steps(steps: &[Step]) -> Vec<Value> {
                     Outcome::NotRun => "not_run",
                 };
                 // `script`: a multi-line or looped command, where the match may be text rather than a real run.
-                let script = r.command.contains('\n') || r.command.contains("<<") || r.command.contains("for ");
+                let script = r.command.contains('\n')
+                    || r.command.contains("<<")
+                    || r.command.contains("for ");
                 out.push(json!({ "run": normalise(&r.command), "outcome": outcome, "fail_output": r.output_failed, "script": script }));
             }
             Step::Edit { doc_only } => {
                 let kind = if *doc_only { "doc" } else { "code" };
                 // Consecutive edits of the same kind collapse into one.
-                if out.last().and_then(|v| v.get("edit")).and_then(Value::as_str) != Some(kind) {
+                if out
+                    .last()
+                    .and_then(|v| v.get("edit"))
+                    .and_then(Value::as_str)
+                    != Some(kind)
+                {
                     out.push(json!({ "edit": kind }));
                 }
             }
@@ -182,7 +164,13 @@ fn normalise(cmd: &str) -> String {
             let t = m
                 .as_str()
                 .split_whitespace()
-                .map(|t| if t.contains(['/', '@', '=', '\\', '"', '\'']) { "<arg>" } else { t })
+                .map(|t| {
+                    if t.contains(['/', '@', '=', '\\', '"', '\'']) {
+                        "<arg>"
+                    } else {
+                        t
+                    }
+                })
                 .collect::<Vec<_>>()
                 .join(" ");
             if !parts.contains(&t) {
@@ -197,18 +185,48 @@ fn redact(s: &str) -> String {
     let rules = [
         (r"https?://\S+", "<url>"),
         (r"[\w.+-]+@[\w-]+\.[\w.]+", "<email>"),
-        (r"(sk-|ghp_|gho_|github_pat_|xox[bp]-|AKIA)[A-Za-z0-9_\-]{8,}", "<secret>"),
+        (
+            r"(sk-|ghp_|gho_|github_pat_|xox[bp]-|AKIA)[A-Za-z0-9_\-]{8,}",
+            "<secret>",
+        ),
         (r"\b[A-Za-z0-9+/_\-]{40,}\b", "<secret>"),
-        (r"(^|[\s(（:：=`])(~|\.{1,2})?/[^\s`'\x22)\]，。]*", "${1}<path>"),
-        (r"(?i)\b(apple|majiayu000)\b", "<user>"),
+        (
+            r"(^|[\s(（:：=`])(~|\.{1,2})?/[^\s`'\x22)\]，。]*",
+            "${1}<path>",
+        ),
     ];
     let mut out = s.to_string();
     for (pat, rep) in rules {
         out = Regex::new(pat).unwrap().replace_all(&out, rep).into_owned();
     }
+    // The local account name, wherever it appears outside a path (e.g. in an email-less byline).
+    for name in local_names() {
+        out = Regex::new(&format!(r"(?i)\b{}\b", regex::escape(&name)))
+            .unwrap()
+            .replace_all(&out, "<user>")
+            .into_owned();
+    }
     out
 }
 
 fn fnv(s: &str) -> u64 {
-    s.bytes().fold(0xcbf29ce484222325, |h, b| (h ^ b as u64).wrapping_mul(0x100000001b3))
+    s.bytes().fold(0xcbf29ce484222325, |h, b| {
+        (h ^ b as u64).wrapping_mul(0x100000001b3)
+    })
+}
+
+/// `$USER` and the last component of `$HOME`, so no account name is written into this file.
+fn local_names() -> Vec<String> {
+    let mut names: Vec<String> = [
+        std::env::var("USER").ok(),
+        std::env::var("HOME")
+            .ok()
+            .and_then(|h| h.rsplit('/').next().map(str::to_string)),
+    ]
+    .into_iter()
+    .flatten()
+    .filter(|n| n.len() >= 3)
+    .collect();
+    names.dedup();
+    names
 }

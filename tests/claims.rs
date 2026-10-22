@@ -9,27 +9,50 @@ fn kinds(text: &str) -> Vec<&'static str> {
 
 #[test]
 fn english_claims() {
-    assert_eq!(kinds("Fixed the parser. All tests pass and the build succeeds."), ["build", "test"]);
-    assert_eq!(kinds("Done: 42 tests passed, clippy is clean, committed as 1a2b3c4d."), ["commit", "lint", "test"]);
-    assert_eq!(kinds("`cargo test` passes and I pushed to origin."), ["push", "test"]);
-    assert_eq!(kinds("Opened a PR and deployed to staging."), ["deploy", "pr"]);
+    assert_eq!(
+        kinds("Fixed the parser. All tests pass and the build succeeds."),
+        ["build", "test"]
+    );
+    assert_eq!(
+        kinds("Done: 42 tests passed, clippy is clean, committed as 1a2b3c4d."),
+        ["commit", "lint", "test"]
+    );
+    assert_eq!(
+        kinds("`cargo test` passes and I pushed to origin."),
+        ["push", "test"]
+    );
+    assert_eq!(
+        kinds("Opened a PR and deployed to staging."),
+        ["deploy", "pr"]
+    );
 }
 
 #[test]
 fn chinese_claims() {
     assert_eq!(kinds("修好了，测试全部通过，已提交。"), ["commit", "test"]);
-    assert_eq!(kinds("编译通过，clippy 无警告，已推送到远程。"), ["build", "lint", "push"]);
+    assert_eq!(
+        kinds("编译通过，clippy 无警告，已推送到远程。"),
+        ["build", "lint", "push"]
+    );
     assert_eq!(kinds("cargo test 全部通过，已创建 PR。"), ["pr", "test"]);
 }
 
 #[test]
 fn negation_is_local_to_the_claim() {
     // The prototype's known miss: "nothing" in the second clause hid the test claim.
-    assert_eq!(kinds("All 166 collector tests pass, but nothing is deployed."), ["test"]);
+    assert_eq!(
+        kinds("All 166 collector tests pass, but nothing is deployed."),
+        ["test"]
+    );
     assert!(kinds("Nothing is committed.").is_empty());
     assert!(kinds("I haven't pushed yet.").is_empty());
     assert!(kinds("测试未通过，还没有提交。").is_empty());
     assert!(kinds("Tests are not passing yet.").is_empty());
+    // Found in the live demo: the negation covers every item of the list.
+    assert!(
+        kinds("I haven't fixed the sum bug, run any tests, or made a commit in this session.")
+            .is_empty()
+    );
 }
 
 #[test]
@@ -63,7 +86,11 @@ fn code_and_quotes_are_ignored() {
 fn disabled_kinds_are_skipped() {
     let cfg: Config = toml::from_str("disable = [\"commit\"]").unwrap();
     let c = Checker::new(&cfg).unwrap();
-    let k: Vec<&str> = c.claims("Tests pass, committed.").into_iter().map(|c| c.kind).collect();
+    let k: Vec<&str> = c
+        .claims("Tests pass, committed.")
+        .into_iter()
+        .map(|c| c.kind)
+        .collect();
     assert_eq!(k, ["test"]);
 }
 
@@ -73,6 +100,9 @@ fn bad_config_is_rejected() {
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join(".receipt.toml"), "disable = [\"tset\"]").unwrap();
     let err = Config::load(Some(&dir)).unwrap_err();
-    assert!(format!("{err:#}").contains("unknown claim kind `tset`"), "{err:#}");
+    assert!(
+        format!("{err:#}").contains("unknown claim kind `tset`"),
+        "{err:#}"
+    );
     std::fs::remove_dir_all(&dir).unwrap();
 }

@@ -16,14 +16,29 @@ fn hook(input: serde_json::Value) -> (i32, String, String) {
         .stderr(Stdio::piped())
         .spawn()
         .unwrap();
-    child.stdin.take().unwrap().write_all(input.to_string().as_bytes()).unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(input.to_string().as_bytes())
+        .unwrap();
     let out = child.wait_with_output().unwrap();
-    (out.status.code().unwrap(), String::from_utf8(out.stdout).unwrap(), String::from_utf8(out.stderr).unwrap())
+    (
+        out.status.code().unwrap(),
+        String::from_utf8(out.stdout).unwrap(),
+        String::from_utf8(out.stderr).unwrap(),
+    )
 }
 
 fn check(name: &str) -> (i32, String) {
-    let out = Command::new(env!("CARGO_BIN_EXE_receipt")).args(["check", &fixture(name)]).output().unwrap();
-    (out.status.code().unwrap(), String::from_utf8(out.stdout).unwrap())
+    let out = Command::new(env!("CARGO_BIN_EXE_receipt"))
+        .args(["check", &fixture(name)])
+        .output()
+        .unwrap();
+    (
+        out.status.code().unwrap(),
+        String::from_utf8(out.stdout).unwrap(),
+    )
 }
 
 #[test]
@@ -40,23 +55,33 @@ fn claude_fixtures() {
     let (code, out) = check("stale.jsonl");
     assert_eq!(code, 1);
     assert!(out.contains("STALE         test"), "{out}");
-    assert!(out.contains("UNSUPPORTED   build"), "{out}");
+    // `cargo test` compiles the crate, so it is build evidence too, and just as stale.
+    assert!(out.contains("STALE         build"), "{out}");
 }
 
 #[test]
 fn background_and_denied_runs() {
     let (code, out) = check("background.jsonl");
     assert_eq!(code, 1);
-    assert!(out.contains("SUPPORTED     test      `npm test` passed"), "{out}");
+    assert!(
+        out.contains("SUPPORTED     test      `npm test` passed"),
+        "{out}"
+    );
     // The push was denied by permissions, so it never ran.
-    assert!(out.contains("UNSUPPORTED   push      no push command ran"), "{out}");
+    assert!(
+        out.contains("UNSUPPORTED   push      no push command ran"),
+        "{out}"
+    );
 }
 
 #[test]
 fn codex_masked_pipe_and_doc_edit() {
     let (code, out) = check("codex_lying.jsonl");
     assert_eq!(code, 1);
-    assert!(out.contains("CONTRADICTED  test") && out.contains("output reports failures"), "{out}");
+    assert!(
+        out.contains("CONTRADICTED  test") && out.contains("output reports failures"),
+        "{out}"
+    );
     assert!(out.contains("SUPPORTED     commit"), "{out}");
 }
 
@@ -71,7 +96,10 @@ fn hook_blocks_once_then_warns() {
     let (code, stdout, stderr) = hook(input.clone());
     assert_eq!(code, 2, "{stderr}");
     assert!(stdout.is_empty());
-    assert!(stderr.starts_with("receipt: 2 claims in your final message have no passing run"), "{stderr}");
+    assert!(
+        stderr.starts_with("receipt: 2 claims in your final message have no passing run"),
+        "{stderr}"
+    );
     assert!(stderr.contains("DO NOT:"), "{stderr}");
 
     let mut again = input;
@@ -79,7 +107,10 @@ fn hook_blocks_once_then_warns() {
     let (code, stdout, _) = hook(again);
     assert_eq!(code, 0);
     let v: serde_json::Value = serde_json::from_str(&stdout).unwrap();
-    assert!(v["systemMessage"].as_str().unwrap().contains("still unverified: test (CONTRADICTED), commit (UNSUPPORTED)"));
+    assert!(v["systemMessage"]
+        .as_str()
+        .unwrap()
+        .contains("still unverified: test (CONTRADICTED), commit (UNSUPPORTED)"));
 }
 
 #[test]
@@ -105,7 +136,10 @@ fn hook_errors_are_visible_but_never_block() {
         "last_assistant_message": "All tests pass.",
     }));
     assert_eq!(code, 1);
-    assert!(err.starts_with("receipt: read transcript /nonexistent.jsonl"), "{err}");
+    assert!(
+        err.starts_with("receipt: read transcript /nonexistent.jsonl"),
+        "{err}"
+    );
 }
 
 #[test]

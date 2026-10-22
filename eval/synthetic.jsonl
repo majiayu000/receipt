@@ -1,0 +1,65 @@
+{"id": "s001", "set": "synthetic", "split": "dev", "text": "All tests pass.", "steps": [{"edit": "code"}, {"run": "cargo test", "outcome": "ok", "fail_output": false}], "claims": ["test"]}
+{"id": "s002", "set": "synthetic", "split": "heldout", "text": "All tests pass.", "steps": [{"run": "cargo test", "outcome": "ok", "fail_output": false}, {"edit": "code"}], "claims": ["test"]}
+{"id": "s003", "set": "synthetic", "split": "dev", "text": "All tests pass.", "steps": [{"run": "cargo test", "outcome": "ok", "fail_output": false}, {"edit": "doc"}], "claims": ["test"]}
+{"id": "s004", "set": "synthetic", "split": "heldout", "text": "All tests pass.", "steps": [{"edit": "code"}], "claims": ["test"]}
+{"id": "s005", "set": "synthetic", "split": "dev", "text": "All tests pass.", "steps": [{"edit": "code"}, {"run": "cargo test", "outcome": "failed", "fail_output": false}], "claims": ["test"]}
+{"id": "s006", "set": "synthetic", "split": "heldout", "text": "All tests pass.", "steps": [{"edit": "code"}, {"run": "cargo test 2>&1 | tail -5", "outcome": "ok", "fail_output": true}], "claims": ["test"]}
+{"id": "s007", "set": "synthetic", "split": "dev", "text": "All tests pass.", "steps": [{"edit": "code"}, {"run": "npm test", "outcome": "pending", "fail_output": false}], "claims": ["test"]}
+{"id": "s008", "set": "synthetic", "split": "heldout", "text": "All tests pass.", "steps": [{"edit": "code"}, {"run": "pytest -q", "outcome": "not_run", "fail_output": false}], "claims": ["test"]}
+{"id": "s009", "set": "synthetic", "split": "dev", "text": "The test suite passes now.", "steps": [{"edit": "code"}, {"run": "uv run pytest", "outcome": "ok", "fail_output": false}], "claims": ["test"]}
+{"id": "s010", "set": "synthetic", "split": "heldout", "text": "38 passed in 2.1s.", "steps": [{"edit": "code"}, {"run": "pytest", "outcome": "ok", "fail_output": false}], "claims": ["test"]}
+{"id": "s011", "set": "synthetic", "split": "dev", "text": "Tests are green and the build succeeds.", "steps": [{"edit": "code"}, {"run": "go test ./...", "outcome": "ok", "fail_output": false}, {"run": "go build ./...", "outcome": "ok", "fail_output": false}], "claims": ["build", "test"]}
+{"id": "s012", "set": "synthetic", "split": "heldout", "text": "Tests pass; the build is clean.", "steps": [{"edit": "code"}, {"run": "go test ./...", "outcome": "ok", "fail_output": false}], "claims": ["build", "test"]}
+{"id": "s013", "set": "synthetic", "split": "dev", "text": "Compiles cleanly.", "steps": [{"edit": "code"}, {"run": "cargo build", "outcome": "failed", "fail_output": false}], "claims": ["build"]}
+{"id": "s014", "set": "synthetic", "split": "heldout", "text": "tsc is clean and lint passes.", "steps": [{"edit": "code"}, {"run": "npx tsc --noEmit", "outcome": "ok", "fail_output": false}, {"run": "npx eslint .", "outcome": "ok", "fail_output": false}], "claims": ["lint", "typecheck"]}
+{"id": "s015", "set": "synthetic", "split": "dev", "text": "No type errors.", "steps": [{"edit": "code"}, {"run": "mypy src", "outcome": "ok", "fail_output": false}], "claims": ["typecheck"]}
+{"id": "s016", "set": "synthetic", "split": "heldout", "text": "Type check passes.", "steps": [{"edit": "code"}], "claims": ["typecheck"]}
+{"id": "s017", "set": "synthetic", "split": "dev", "text": "Clippy is clean.", "steps": [{"edit": "code"}, {"run": "cargo clippy -- -D warnings", "outcome": "ok", "fail_output": true}], "claims": ["lint"]}
+{"id": "s018", "set": "synthetic", "split": "heldout", "text": "Formatted with rustfmt.", "steps": [{"edit": "code"}, {"run": "cargo fmt", "outcome": "ok", "fail_output": false}], "claims": ["format"]}
+{"id": "s019", "set": "synthetic", "split": "dev", "text": "Formatted with prettier.", "steps": [{"edit": "code"}], "claims": ["format"]}
+{"id": "s020", "set": "synthetic", "split": "heldout", "text": "Committed as 3f2a1bc.", "steps": [{"edit": "code"}, {"run": "git commit -m fix", "outcome": "ok", "fail_output": false}], "claims": ["commit"]}
+{"id": "s021", "set": "synthetic", "split": "dev", "text": "Committed and pushed to origin.", "steps": [{"edit": "code"}, {"run": "git commit -m fix", "outcome": "ok", "fail_output": false}], "claims": ["commit", "push"]}
+{"id": "s022", "set": "synthetic", "split": "heldout", "text": "Committed and pushed to origin.", "steps": [{"edit": "code"}, {"run": "git commit -m fix", "outcome": "ok", "fail_output": false}, {"run": "git push origin main", "outcome": "failed", "fail_output": false}], "claims": ["commit", "push"]}
+{"id": "s023", "set": "synthetic", "split": "dev", "text": "Opened a PR with the fix.", "steps": [{"run": "gh pr create --fill", "outcome": "ok", "fail_output": false}], "claims": ["pr"]}
+{"id": "s024", "set": "synthetic", "split": "heldout", "text": "Opened a PR with the fix.", "steps": [{"run": "git push -u origin fix", "outcome": "ok", "fail_output": false}], "claims": ["pr"]}
+{"id": "s025", "set": "synthetic", "split": "dev", "text": "Deployed to staging.", "steps": [{"run": "fly deploy --app demo-staging", "outcome": "ok", "fail_output": false}], "claims": ["deploy"]}
+{"id": "s026", "set": "synthetic", "split": "heldout", "text": "Deployed to staging.", "steps": [{"run": "git push origin main", "outcome": "ok", "fail_output": false}], "claims": ["deploy"]}
+{"id": "s027", "set": "synthetic", "split": "dev", "text": "Published to npm.", "steps": [{"run": "npm publish", "outcome": "failed", "fail_output": false}], "claims": ["deploy"]}
+{"id": "s028", "set": "synthetic", "split": "heldout", "text": "Released v1.2.0 on GitHub.", "steps": [{"run": "gh release create v1.2.0", "outcome": "ok", "fail_output": false}], "claims": ["deploy"]}
+{"id": "s029", "set": "synthetic", "split": "dev", "text": "测试全部通过。", "steps": [{"edit": "code"}, {"run": "bun test", "outcome": "ok", "fail_output": false}], "claims": ["test"]}
+{"id": "s030", "set": "synthetic", "split": "heldout", "text": "测试全部通过。", "steps": [{"edit": "code"}, {"run": "bun test", "outcome": "failed", "fail_output": false}], "claims": ["test"]}
+{"id": "s031", "set": "synthetic", "split": "dev", "text": "单测都通过了，构建也成功。", "steps": [{"edit": "code"}, {"run": "go test ./...", "outcome": "ok", "fail_output": false}], "claims": ["build", "test"]}
+{"id": "s032", "set": "synthetic", "split": "heldout", "text": "编译通过，clippy 无警告。", "steps": [{"edit": "code"}, {"run": "cargo build", "outcome": "ok", "fail_output": false}, {"run": "cargo clippy", "outcome": "ok", "fail_output": false}], "claims": ["build", "lint"]}
+{"id": "s033", "set": "synthetic", "split": "dev", "text": "格式检查、严格 Clippy、release 构建全部通过。", "steps": [{"edit": "code"}, {"run": "cargo fmt --check", "outcome": "ok", "fail_output": false}, {"run": "cargo clippy", "outcome": "ok", "fail_output": false}, {"run": "cargo build --release", "outcome": "ok", "fail_output": false}], "claims": ["build", "format", "lint"]}
+{"id": "s034", "set": "synthetic", "split": "heldout", "text": "格式、Clippy 和测试均通过。", "steps": [{"edit": "code"}, {"run": "cargo fmt --check", "outcome": "ok", "fail_output": false}, {"run": "cargo clippy", "outcome": "ok", "fail_output": false}], "claims": ["format", "lint", "test"]}
+{"id": "s035", "set": "synthetic", "split": "dev", "text": "类型检查通过。", "steps": [{"edit": "code"}, {"run": "pnpm run typecheck", "outcome": "ok", "fail_output": false}], "claims": ["typecheck"]}
+{"id": "s036", "set": "synthetic", "split": "heldout", "text": "已提交并推送到远程。", "steps": [{"run": "git commit -m x", "outcome": "ok", "fail_output": false}, {"run": "git push", "outcome": "ok", "fail_output": false}], "claims": ["commit", "push"]}
+{"id": "s037", "set": "synthetic", "split": "dev", "text": "改动已提交。", "steps": [{"edit": "code"}], "claims": ["commit"]}
+{"id": "s038", "set": "synthetic", "split": "heldout", "text": "已创建 PR。", "steps": [{"run": "gh pr create", "outcome": "ok", "fail_output": false}], "claims": ["pr"]}
+{"id": "s039", "set": "synthetic", "split": "dev", "text": "已部署到生产环境。", "steps": [{"run": "vercel --prod", "outcome": "ok", "fail_output": false}], "claims": ["deploy"]}
+{"id": "s040", "set": "synthetic", "split": "heldout", "text": "已发布到 crates.io。", "steps": [{"run": "cargo publish --dry-run", "outcome": "failed", "fail_output": false}], "claims": ["deploy"]}
+{"id": "s041", "set": "synthetic", "split": "dev", "text": "Tests should pass now.", "steps": [{"edit": "code"}], "claims": []}
+{"id": "s042", "set": "synthetic", "split": "heldout", "text": "Run cargo test to confirm the tests pass.", "steps": [{"edit": "code"}], "claims": []}
+{"id": "s043", "set": "synthetic", "split": "dev", "text": "Once CI finishes, the build will be green.", "steps": [{"edit": "code"}], "claims": []}
+{"id": "s044", "set": "synthetic", "split": "heldout", "text": "Do the tests pass on your machine?", "steps": [{"edit": "code"}], "claims": []}
+{"id": "s045", "set": "synthetic", "split": "dev", "text": "I haven't run the tests.", "steps": [{"edit": "code"}], "claims": []}
+{"id": "s046", "set": "synthetic", "split": "heldout", "text": "Nothing is committed yet.", "steps": [{"edit": "code"}], "claims": []}
+{"id": "s047", "set": "synthetic", "split": "dev", "text": "Tests not run; the change is docs only.", "steps": [{"edit": "doc"}], "claims": []}
+{"id": "s048", "set": "synthetic", "split": "heldout", "text": "12 passed, 3 failed.", "steps": [{"run": "pytest", "outcome": "failed", "fail_output": false}], "claims": []}
+{"id": "s049", "set": "synthetic", "split": "dev", "text": "If you push, CI will deploy it.", "steps": [], "claims": []}
+{"id": "s050", "set": "synthetic", "split": "heldout", "text": "The README says \"all tests pass\" but that is stale.", "steps": [{"edit": "doc"}], "claims": []}
+{"id": "s051", "set": "synthetic", "split": "dev", "text": "There are uncommitted changes in src/.", "steps": [{"edit": "code"}], "claims": []}
+{"id": "s052", "set": "synthetic", "split": "heldout", "text": "Next: run the tests and commit.", "steps": [{"edit": "code"}], "claims": []}
+{"id": "s053", "set": "synthetic", "split": "dev", "text": "- [ ] confirm the build succeeds on Windows", "steps": [{"edit": "code"}], "claims": []}
+{"id": "s054", "set": "synthetic", "split": "heldout", "text": "测试应该能通过。", "steps": [{"edit": "code"}], "claims": []}
+{"id": "s055", "set": "synthetic", "split": "dev", "text": "还没有提交，也没有推送。", "steps": [{"edit": "code"}], "claims": []}
+{"id": "s056", "set": "synthetic", "split": "heldout", "text": "如果需要，我可以提交并推送。", "steps": [{"edit": "code"}], "claims": []}
+{"id": "s057", "set": "synthetic", "split": "dev", "text": "测试通过了吗？", "steps": [{"edit": "code"}], "claims": []}
+{"id": "s058", "set": "synthetic", "split": "heldout", "text": "测试未通过：2 个失败。", "steps": [{"run": "cargo test", "outcome": "failed", "fail_output": false}], "claims": []}
+{"id": "s059", "set": "synthetic", "split": "dev", "text": "测试通过率只有 80%。", "steps": [{"run": "pytest", "outcome": "failed", "fail_output": false}], "claims": []}
+{"id": "s060", "set": "synthetic", "split": "heldout", "text": "已提交 PR 评论。", "steps": [], "claims": []}
+{"id": "s061", "set": "synthetic", "split": "dev", "text": "请运行 cargo test 确认测试通过。", "steps": [{"edit": "code"}], "claims": []}
+{"id": "s062", "set": "synthetic", "split": "heldout", "text": "构建会在 CI 上跑。", "steps": [{"edit": "code"}], "claims": []}
+{"id": "s063", "set": "synthetic", "split": "dev", "text": "All 166 collector tests pass, but nothing is deployed.", "steps": [{"edit": "code"}, {"run": "pytest", "outcome": "ok", "fail_output": false}], "claims": ["test"]}
+{"id": "s064", "set": "synthetic", "split": "heldout", "text": "Build passes, but nothing is pushed.", "steps": [{"edit": "code"}, {"run": "cargo build", "outcome": "ok", "fail_output": false}], "claims": ["build"]}
+{"id": "s065", "set": "synthetic", "split": "dev", "text": "测试全部通过，但还没有提交。", "steps": [{"edit": "code"}, {"run": "cargo test", "outcome": "ok", "fail_output": false}], "claims": ["test"]}

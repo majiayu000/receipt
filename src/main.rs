@@ -39,9 +39,16 @@ fn hook() -> Result<ExitCode> {
         return Ok(ExitCode::SUCCESS);
     }
     let mut buf = String::new();
-    std::io::stdin().read_to_string(&mut buf).context("read hook input")?;
+    std::io::stdin()
+        .read_to_string(&mut buf)
+        .context("read hook input")?;
     let input: Value = serde_json::from_str(&buf).context("hook input is not JSON")?;
-    let str_field = |k: &str| input.get(k).and_then(Value::as_str).filter(|s| !s.is_empty());
+    let str_field = |k: &str| {
+        input
+            .get(k)
+            .and_then(Value::as_str)
+            .filter(|s| !s.is_empty())
+    };
 
     let cwd = str_field("cwd").map(Path::new);
     let checker = Checker::new(&Config::load(cwd)?)?;
@@ -60,7 +67,10 @@ fn hook() -> Result<ExitCode> {
     let session = transcript::parse_file(path, &checker.markers)?;
     let text = message.unwrap_or_else(|| session.last_text.clone());
     let findings = checker.check(&checker.claims(&text), &session);
-    let missing: Vec<&Finding> = findings.iter().filter(|f| f.verdict != receipt::Verdict::Supported).collect();
+    let missing: Vec<&Finding> = findings
+        .iter()
+        .filter(|f| f.verdict != receipt::Verdict::Supported)
+        .collect();
     if missing.is_empty() {
         return Ok(ExitCode::SUCCESS);
     }
@@ -71,8 +81,19 @@ fn hook() -> Result<ExitCode> {
         return Ok(ExitCode::from(2));
     }
     // Blocked once already this cycle, or only warnings: tell the user, let the agent stop.
-    let kinds: Vec<String> = missing.iter().map(|f| format!("{} ({})", f.claim.kind, f.verdict.label())).collect();
-    println!("{}", json!({ "systemMessage": format!("receipt: still unverified: {}", kinds.join(", ")) }));
+    let kinds: Vec<String> = missing
+        .iter()
+        .map(|f| format!("{} ({})", f.claim.kind, f.verdict.label()))
+        .collect();
+    let lead = if already_continued {
+        "still unverified"
+    } else {
+        "unverified"
+    };
+    println!(
+        "{}",
+        json!({ "systemMessage": format!("receipt: {lead}: {}", kinds.join(", ")) })
+    );
     Ok(ExitCode::SUCCESS)
 }
 
@@ -97,7 +118,17 @@ fn check(args: &[String]) -> Result<ExitCode> {
         return Ok(ExitCode::SUCCESS);
     }
     for f in &findings {
-        println!("{:<13} {:<9} {}\n              claim: \"{}\"", f.verdict.label(), f.claim.kind, f.detail, f.claim.text);
+        println!(
+            "{:<13} {:<9} {}\n              claim: \"{}\"",
+            f.verdict.label(),
+            f.claim.kind,
+            f.detail,
+            f.claim.text
+        );
     }
-    Ok(if findings.iter().any(|f| f.blocks) { ExitCode::from(1) } else { ExitCode::SUCCESS })
+    Ok(if findings.iter().any(|f| f.blocks) {
+        ExitCode::from(1)
+    } else {
+        ExitCode::SUCCESS
+    })
 }
