@@ -1,0 +1,21 @@
+[package]
+name = "receipt"
+version = "0.1.0"
+edition = "2021"
+description = "Stop hook for Claude Code and Codex: a completion claim needs a passing command in the transcript"
+license = "MIT"
+repository = "https://github.com/majiayu000/receipt"
+keywords = ["claude-code", "codex", "hooks", "agents", "verification"]
+categories = ["command-line-utilities", "development-tools"]
+exclude = ["eval/", "docs/"]
+
+[dependencies]
+anyhow = "1"
+regex = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+
+[profile.release]
+lto = true
+codegen-units = 1
