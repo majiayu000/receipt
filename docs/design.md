@@ -100,7 +100,9 @@ An edit is non-code, and does not make a run stale, when every path it names end
 
 The detail then names that step, so the user can see what may have done the verifying. CONTRADICTED is never downgraded, and neither is "nothing ran at all after the edit".
 
-Subagent transcripts (`subagents/*.jsonl`) are not merged into the main session. A main agent relaying a subagent's test run would be flagged. Each subagent is checked against its own transcript on `SubagentStop`. This is a known recall/precision trade-off, listed under limits.
+**Relayed results.** Subagent transcripts (`subagents/*.jsonl`) are not merged into the main session; each subagent is checked against its own transcript on `SubagentStop`. Instead, the parser notes whether the session received reports from other agents: `Agent`/`Task`/`SendMessage` calls, MCP tools about sessions, threads or agents, Codex's multi-agent tools (`spawn_agent`, `send_message`, …), and `<cross-session-message>` / `<side-sessions-event>` deliveries. In such a session an UNSUPPORTED claim (nothing of its own ran) warns instead of blocking, because the agent is most likely passing on another agent's result. A failed or stale run of its own still blocks.
+
+The first attempt matched the claim's words verbatim against earlier tool outputs. On the replay it caught none of the real relays, because agents paraphrase or translate what they relay, so it was removed.
 
 ## Recognising claims
 
@@ -250,13 +252,13 @@ Bias note: the local sessions run with vibeguard's "verify before claiming" rule
 
 The gate label is derived, not judged. It applies the evidence rules to the hand-labelled kinds. Gate P/R therefore measures how detection errors propagate, not whether the agent was honest. Whether a block is fair is measured separately by **replay**:
 
-- `examples/replay.rs` runs every turn-final message of the local sessions through the hook logic;
+- `receipt audit` runs every turn-final message of the local sessions through the hook logic;
 - the blocked stops are then reviewed by hand. Results are in the README.
 
 ## Limits
 
 - Out of the box, receipt only knows common toolchains. Projects with their own runners should add them under `[evidence]`. Otherwise their claims get warnings, or blocks when nothing at all ran after the last edit.
-- A summary relayed from another session or a subagent ("Keepline: three fixes committed") has no receipt in this transcript and is blocked.
+- A relayed summary in a session with no visible agent reports (for example a paraphrase of a file the agent read) has no receipt in this transcript and is blocked.
 
 - Regex detection has a recall ceiling. Unusual phrasings ("everything's green on my side") are missed by design.
 - Subagent evidence is not merged into the parent session.

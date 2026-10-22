@@ -1,13 +1,23 @@
 [package]
-name = "receipt"
+name = "agent-receipt"
 version = "0.1.0"
 edition = "2021"
-description = "Stop hook for Claude Code and Codex: a completion claim needs a passing command in the transcript"
+rust-version = "1.82"
+description = "Claude Code and Codex Stop hook that blocks hallucinated completion: \"tests pass\" / \"committed\" claims need a passing command in the transcript"
 license = "MIT"
 repository = "https://github.com/majiayu000/receipt"
-keywords = ["claude-code", "codex", "hooks", "agents", "verification"]
+homepage = "https://github.com/majiayu000/receipt"
+readme = "README.md"
+keywords = ["claude-code", "codex", "ai-agents", "hooks", "verification"]
 categories = ["command-line-utilities", "development-tools"]
-exclude = ["eval/", "docs/"]
+exclude = ["eval/", "docs/", ".github/"]
+
+[lib]
+name = "receipt"
+
+[[bin]]
+name = "receipt"
+path = "src/main.rs"
 
 [dependencies]
 anyhow = "1"
