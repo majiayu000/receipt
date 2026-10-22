@@ -80,9 +80,11 @@ fn session(steps: &[StepSpec]) -> Session {
             (None, None) => panic!("step has neither run nor edit"),
         })
         .collect();
+    // The eval metadata does not record whether a session received other agents' reports.
     Session {
         steps,
         last_text: String::new(),
+        agent_reports: false,
     }
 }
 

@@ -42,6 +42,9 @@ pub enum Step {
 pub struct Session {
     pub steps: Vec<Step>,
     pub last_text: String,
+    /// The session received reports from other agents: subagent results, messages from other
+    /// sessions, session or thread tools. Its claims may describe their work, not its own runs.
+    pub agent_reports: bool,
 }
 
 const EDIT_TOOLS: &[&str] = &["Edit", "Write", "MultiEdit", "NotebookEdit"];
@@ -69,6 +72,20 @@ static READER: LazyLock<Regex> = LazyLock::new(|| {
         r"git\s+(log|show|diff|status|grep|blame))\b"
     ))
     .unwrap()
+});
+/// Raw-line markers of reports from other agents: messages delivered from other sessions, and
+/// Codex's multi-agent tools.
+const AGENT_REPORT_MARKERS: &[&str] = &[
+    "<cross-session-message",
+    "<side-sessions-event",
+    "\"name\":\"spawn_agent\"",
+    "\"name\":\"wait_agent\"",
+    "\"name\":\"send_message\"",
+    "\"name\":\"followup_task\"",
+];
+/// MCP tools that read or drive other sessions, threads or agents.
+static AGENT_TOOL: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)__.*(session|thread|agent)|^(get|list|read)_(session|thread)").unwrap()
 });
 static EXIT_CODE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^Exit code (-?\d+)").unwrap());
 static NOTIFY_ID: LazyLock<Regex> =
@@ -171,6 +188,9 @@ pub fn parse_str(raw: &str, markers: &Markers) -> Result<Session> {
         // Claude Code delivers these in queue-operation / attachment records; the tags survive JSON escaping.
         if line.contains("<task-notification>") {
             p.notification(line);
+        }
+        if AGENT_REPORT_MARKERS.iter().any(|m| line.contains(m)) {
+            p.s.agent_reports = true;
         }
         let v: Value = match serde_json::from_str(line) {
             Ok(v) => v,
@@ -287,10 +307,15 @@ impl Parser<'_> {
             self.s.steps.push(Step::Edit {
                 doc_only: non_code(path),
             });
-        } else if name.contains("__") {
-            // MCP tools: the tool name is the "command" (e.g. github create_pull_request).
-            let idx = self.push_run(name.to_string(), Outcome::NoResult, "");
-            self.pending.insert(id, idx);
+        } else {
+            if matches!(name, "Agent" | "Task" | "SendMessage") || AGENT_TOOL.is_match(name) {
+                self.s.agent_reports = true;
+            }
+            if name.contains("__") {
+                // MCP tools: the tool name is the "command" (e.g. github create_pull_request).
+                let idx = self.push_run(name.to_string(), Outcome::NoResult, "");
+                self.pending.insert(id, idx);
+            }
         }
     }
 
@@ -405,6 +430,9 @@ impl Parser<'_> {
             "McpToolCall" => {
                 let server = item.get("server").and_then(Value::as_str).unwrap_or("");
                 let tool = item.get("tool").and_then(Value::as_str).unwrap_or("");
+                if AGENT_TOOL.is_match(tool) {
+                    self.s.agent_reports = true;
+                }
                 let outcome = match item.get("status").and_then(Value::as_str) {
                     Some("completed") => Outcome::Ok,
                     _ => Outcome::Failed(None),

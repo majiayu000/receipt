@@ -152,3 +152,40 @@ fn subagent_uses_its_own_transcript() {
     }));
     assert_eq!(code, 0, "{err}");
 }
+
+#[test]
+fn relayed_claims_warn_but_own_failed_runs_still_block() {
+    // The session read another session's report, and no commit ran here: likely a relay.
+    let (code, stdout, stderr) = hook(serde_json::json!({
+        "transcript_path": fixture("relay.jsonl"),
+        "last_assistant_message": "- **Keepline**: three fixes committed on the fix-sidebar branch.",
+    }));
+    assert_eq!(code, 0, "{stderr}");
+    assert!(
+        stdout.contains("receipt: unverified: commit (UNSUPPORTED)"),
+        "{stdout}"
+    );
+
+    // This session's own test run failed: that is not a relay.
+    let (code, _, stderr) = hook(serde_json::json!({
+        "transcript_path": fixture("relay.jsonl"),
+        "last_assistant_message": "All tests pass.",
+    }));
+    assert_eq!(code, 2, "{stderr}");
+    assert!(stderr.contains("CONTRADICTED"), "{stderr}");
+}
+
+#[test]
+fn audit_replays_every_stop() {
+    let out = Command::new(env!("CARGO_BIN_EXE_receipt"))
+        .args(["audit", &fixture("lying.jsonl"), &fixture("honest.jsonl")])
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert!(out.status.success());
+    assert!(
+        stdout.contains("stops: 2, with claims: 2, would block: 1, would warn: 0 (0 relayed)"),
+        "{stdout}"
+    );
+    assert!(stdout.contains("lying.jsonl:5"), "{stdout}");
+}

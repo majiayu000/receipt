@@ -96,6 +96,8 @@ pub struct Finding {
     pub verdict: Verdict,
     pub detail: String,
     pub blocks: bool,
+    /// Downgraded to a warning because the session relays other agents' reports.
+    pub relayed: bool,
 }
 
 /// Compiled rules for one config.
@@ -142,6 +144,11 @@ impl Checker {
 
     pub fn claims(&self, text: &str) -> Vec<Claim> {
         self.detector.detect(text)
+    }
+
+    /// Parse a transcript and check the claims against it.
+    pub fn check_transcript(&self, claims: &[Claim], raw: &str) -> Result<Vec<Finding>> {
+        Ok(self.check(claims, &transcript::parse_str(raw, &self.markers)?))
     }
 
     pub fn check(&self, claims: &[Claim], s: &Session) -> Vec<Finding> {
@@ -216,11 +223,19 @@ impl Checker {
                 ));
             }
         }
+        // Nothing ran at all, in a session that received other agents' reports: most likely the
+        // agent is passing on their result. Failed and stale runs of its own still block.
+        let relayed = blocks && verdict == Verdict::Unsupported && s.agent_reports;
+        if relayed {
+            blocks = false;
+            detail.push_str("; this session received reports from other agents, so it may be relaying their result");
+        }
         Finding {
             claim: claim.clone(),
             verdict,
             detail,
             blocks,
+            relayed,
         }
     }
 }

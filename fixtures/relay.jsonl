@@ -1,0 +1,5 @@
+{"type":"assistant","message":{"content":[{"type":"tool_use","id":"m1","name":"mcp__sessions__get_session","input":{"id":"other"}}]}}
+{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"m1","content":"Latest report from the keepline session: three fixes committed on the fix-sidebar branch."}]}}
+{"type":"assistant","message":{"content":[{"type":"tool_use","id":"t1","name":"Bash","input":{"command":"cargo test"}}]}}
+{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t1","is_error":true,"content":"Exit code 101\ntest result: FAILED. 9 passed; 1 failed"}]}}
+{"type":"assistant","message":{"content":[{"type":"text","text":"Status of the other sessions."}]}}
