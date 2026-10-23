@@ -86,6 +86,27 @@ fn codex_masked_pipe_and_doc_edit() {
 }
 
 #[test]
+fn clippy_warning_allows_build_but_blocks_lint_claim() {
+    let (code, out) = check("clippy_warning.jsonl");
+    assert_eq!(code, 0, "{out}");
+    assert!(out.contains("SUPPORTED     build"), "{out}");
+
+    let (code, out, err) = hook(serde_json::json!({
+        "transcript_path": fixture("clippy_warning.jsonl"),
+        "last_assistant_message": "Build succeeds.",
+    }));
+    assert_eq!((code, out.as_str(), err.as_str()), (0, "", ""));
+
+    let (code, _, err) = hook(serde_json::json!({
+        "transcript_path": fixture("clippy_warning.jsonl"),
+        "last_assistant_message": "Clippy is clean.",
+    }));
+    assert_eq!(code, 2, "{err}");
+    assert!(err.contains("CONTRADICTED"), "{err}");
+    assert!(err.contains("output reports failures"), "{err}");
+}
+
+#[test]
 fn hook_blocks_once_then_warns() {
     let input = serde_json::json!({
         "hook_event_name": "Stop",

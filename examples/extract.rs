@@ -135,7 +135,7 @@ fn steps(steps: &[Step]) -> Vec<Value> {
                 let script = r.command.contains('\n')
                     || r.command.contains("<<")
                     || r.command.contains("for ");
-                out.push(json!({ "run": normalise(&r.command), "outcome": outcome, "fail_output": r.output_failed, "script": script }));
+                out.push(json!({ "run": normalise(&r.command), "outcome": outcome, "fail_output": !r.output_failures.is_empty(), "fail_output_kinds": r.output_failures, "script": script }));
             }
             Step::Edit { doc_only } => {
                 let kind = if *doc_only { "doc" } else { "code" };

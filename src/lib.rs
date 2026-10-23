@@ -130,7 +130,13 @@ impl Checker {
             kinds: kinds
                 .iter()
                 .zip(&evidence)
-                .map(|(k, ev)| (ev.clone(), k.fail_output.map(|f| Regex::new(f).unwrap())))
+                .map(|(k, ev)| {
+                    (
+                        k.name,
+                        ev.clone(),
+                        k.fail_output.map(|f| Regex::new(f).unwrap()),
+                    )
+                })
                 .collect(),
         };
         Ok(Checker {
@@ -187,7 +193,7 @@ impl Checker {
                 match &r.outcome {
                     Outcome::Failed(Some(c)) => (Verdict::Contradicted, format!("the last `{cmd}` (step {step}) failed (exit {c})")),
                     Outcome::Failed(None) => (Verdict::Contradicted, format!("the last `{cmd}` (step {step}) failed")),
-                    Outcome::Ok if r.output_failed => {
+                    Outcome::Ok if r.output_failures.contains(&kind.name) => {
                         (Verdict::Contradicted, format!("the last `{cmd}` (step {step}) exited 0 but its output reports failures"))
                     }
                     Outcome::Pending => {

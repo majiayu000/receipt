@@ -1,0 +1,2 @@
+{"type":"event_msg","payload":{"type":"item_completed","item":{"type":"CommandExecution","command":"cargo clippy","exit_code":0,"status":"completed","aggregated_output":"warning: demo (lib) generated 1 warning\n    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.10s\n"}}}
+{"type":"event_msg","payload":{"type":"item_completed","item":{"type":"AgentMessage","content":[{"type":"Text","text":"Build succeeds."}],"phase":"final_answer"}}}

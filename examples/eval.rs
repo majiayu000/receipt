@@ -33,6 +33,8 @@ struct StepSpec {
     outcome: Option<String>,
     #[serde(default)]
     fail_output: bool,
+    /// New extracts retain kind attribution; old datasets only contain a global flag.
+    fail_output_kinds: Option<Vec<String>>,
     edit: Option<String>,
 }
 
@@ -72,7 +74,15 @@ fn session(steps: &[StepSpec]) -> Session {
                     Some("not_run") => Outcome::NotRun,
                     _ => Outcome::NoResult,
                 },
-                output_failed: s.fail_output,
+                output_failures: receipt::rules::KINDS
+                    .iter()
+                    .filter(|k| {
+                        s.fail_output_kinds.as_ref().map_or(s.fail_output, |kinds| {
+                            kinds.iter().any(|name| name == k.name)
+                        })
+                    })
+                    .map(|k| k.name)
+                    .collect(),
             }),
             (None, Some(kind)) => Step::Edit {
                 doc_only: kind == "doc",
