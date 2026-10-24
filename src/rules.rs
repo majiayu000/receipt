@@ -51,7 +51,8 @@ pub const KINDS: &[Kind] = &[
             r"|(^|[;&|\n]\s*)\.{0,2}/\S*(test|verify)\w*\.sh\b",
         ),
         fail_output: Some(concat!(
-            r"(?m)test result: FAILED|^FAILED\b|\b[1-9]\d* (failed|failing)\b|^--- FAIL|^FAIL\b|could not compile|",
+            // "1 failed," / "1 failed;" / "1 failed in 0.2s", not "passed 34 failed 0".
+            r"(?m)test result: FAILED|^FAILED\b|\b[1-9]\d* (failed|failing)([,;)|]|\s*$|\s+in\b)|^--- FAIL|^FAIL\b|could not compile|",
             r"error\[E\d{4}\]|collected 0 items|no tests ran|No tests found",
         )),
         unsupported_warns: false,
@@ -175,7 +176,7 @@ pub const KINDS: &[Kind] = &[
         unless_before: None,
         veto: None,
         zh: None,
-        evidence: r"\bgit\s+(-C\s+\S+\s+|-c\s+\S+\s+)*push\b",
+        evidence: r"\bgit\s+(-C\s+\S+\s+|-c\s+\S+\s+)*push\b|\bgh\s+repo\s+create\b.*\s--push\b",
         fail_output: None,
         unsupported_warns: false,
     },

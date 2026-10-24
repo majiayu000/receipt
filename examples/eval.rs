@@ -66,6 +66,7 @@ fn session(steps: &[StepSpec]) -> Session {
         .iter()
         .map(|s| match (&s.run, &s.edit) {
             (Some(cmd), _) => Step::Run(Run {
+                id: String::new(),
                 command: cmd.clone(),
                 outcome: match s.outcome.as_deref() {
                     Some("ok") => Outcome::Ok,

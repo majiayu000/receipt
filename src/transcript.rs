@@ -23,6 +23,8 @@ pub enum Outcome {
 
 #[derive(Debug, Clone)]
 pub struct Run {
+    /// The host's id for this call (Claude Code `tool_use_id`, Codex item or call id). May be empty.
+    pub id: String,
     pub command: String,
     pub outcome: Outcome,
     /// Kinds whose evidence matches this command and whose failure markers match its output.
@@ -87,6 +89,52 @@ const AGENT_REPORT_MARKERS: &[&str] = &[
 static AGENT_TOOL: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?i)__.*(session|thread|agent)|^(get|list|read)_(session|thread)").unwrap()
 });
+/// Programs whose first argument names the tool (`cargo clippy`, `go vet`, `npm run lint`).
+const LAUNCHERS: &[&str] = &[
+    "cargo",
+    "go",
+    "npm",
+    "pnpm",
+    "yarn",
+    "bun",
+    "deno",
+    "make",
+    "just",
+    "gradle",
+    "gradlew",
+    "./gradlew",
+    "mvn",
+    "swift",
+    "dotnet",
+    "zig",
+    "uv",
+];
+static SCRIPT_RUNNER: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^(\S*/)?(python[0-9.]*|node|bun|deno|ruby|bash|sh|zsh)$").unwrap()
+});
+static SCRIPT_FILE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\.(py|js|mjs|ts|rb|sh)$").unwrap());
+static HEREDOC: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r#"<<-?\s*['"]?(\w+)['"]?"#).unwrap());
+/// Prefixes that run the next word as the command.
+static WRAPPER: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(concat!(
+        r"^(\w+=\S*\s+|(time|nice|nohup|command|exec|xargs|sudo)\s+|env(\s+-u\s+\S+|\s+-i)*\s+|timeout\s+\S+\s+|",
+        r"(fnm|mise|volta|nvm|asdf)\s+(exec|run)\b.*?\s--\s+|",
+        r"uv\s+run\s+(--(with|from|python|project|directory)[= ]\S+\s+|--(no-project|frozen|locked|isolated)\s+)*|",
+        r"(poetry|pipenv|pdm|hatch|rye)\s+run\s+|uvx\s+|npx\s+(--yes\s+|-y\s+)?|bunx\s+|bun\s+x\s+|pnpm\s+(exec|dlx)\s+|",
+        r"(\S*/)?python[0-9.]*\s+-m\s+)"
+    ))
+    .unwrap()
+});
+static SHELL_C: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"^(\S*/)?(?:ba|z)?sh\s+-\w*c\s+(?:'([^']*)'|"([^"]*)")"#).unwrap()
+});
+// The groups name what is redefined: `name() {`, `function name`, `alias name=`.
+static REDEFINE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(^|[;&|\n]\s*)(function\s+)?(?:(\w[\w.-]*)\s*\(\)\s*\{|alias\s+(\w[\w.-]*)=)")
+        .unwrap()
+});
 static EXIT_CODE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^Exit code (-?\d+)").unwrap());
 static NOTIFY_ID: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"<tool-use-id>([^<]+)</tool-use-id>").unwrap());
@@ -101,15 +149,16 @@ pub struct Markers {
 }
 
 impl Markers {
+    /// Kinds whose evidence names a program this command executes and whose failure markers
+    /// match its output.
     pub fn output_failures(&self, command: &str, output: &str) -> Vec<&'static str> {
         if output.is_empty() {
             return vec![];
         }
-        let text = evidence_text(command);
         self.kinds
             .iter()
             .filter_map(|(name, ev, fail)| {
-                (ev.is_match(&text) && fail.as_ref().is_some_and(|f| f.is_match(output)))
+                (fail.as_ref().is_some_and(|f| f.is_match(output)) && runs(ev, command))
                     .then_some(*name)
             })
             .collect()
@@ -128,38 +177,140 @@ fn bash_edit_non_code(command: &str) -> bool {
     !files.is_empty() && files.iter().all(|f| non_code(f))
 }
 
-/// Text used for evidence matching.
+/// The commands a shell line actually executes, one per segment, each starting at its program.
 ///
-/// Segments that only read or print (`rg 'cargo test'`, `cat log`) are dropped, as is a heredoc
-/// written to a file. Quotes, commas and brackets become spaces, so a harness script's
-/// `subprocess.run(["cargo", "test"])` reads as `cargo test`.
-pub fn evidence_text(command: &str) -> String {
+/// Evidence must name the program of a segment: `echo cargo test` executes `echo`, a heredoc
+/// written to a file executes nothing, and a Python string `["cargo", "test"]` is not a command.
+/// Wrappers are peeled off (`timeout 60 cargo test`, `uv run pytest`, `python -m pytest`,
+/// `bash -c "cargo test"`). Segments that only read or print are dropped, and so is a segment
+/// whose program the same line redefines (`cargo() { echo ok; }`, `alias pytest=…`).
+pub fn executed(command: &str) -> Vec<String> {
     if WRITE_HEREDOC.is_match(command) {
-        return String::new();
+        return vec![];
     }
-    let kept: Vec<&str> = segments(command)
-        .into_iter()
-        .filter(|seg| !READER.is_match(seg))
+    let redefined: Vec<String> = REDEFINE
+        .captures_iter(command)
+        .filter_map(|c| {
+            c.get(3)
+                .or_else(|| c.get(4))
+                .map(|m| m.as_str().to_string())
+        })
         .collect();
-    kept.join(" ; ").replace(['"', '\'', ',', '[', ']'], " ")
+    let command = &shell_lines(command);
+    let mut out = vec![];
+    for seg in segments(command) {
+        let mut seg = seg.trim();
+        loop {
+            let before = seg;
+            if let Some(m) = WRAPPER.find(seg) {
+                seg = seg[m.end()..].trim_start();
+            }
+            if seg == before {
+                break;
+            }
+        }
+        if let Some(c) = SHELL_C.captures(seg) {
+            let inner = c.get(2).or_else(|| c.get(3)).map_or("", |m| m.as_str());
+            out.extend(executed(inner));
+            continue;
+        }
+        // A wrapper script handed a command (`python3 gpulock.py cargo test`) runs that command.
+        let tokens: Vec<&str> = seg.split_whitespace().collect();
+        if tokens.len() > 2
+            && SCRIPT_RUNNER.is_match(tokens[0])
+            && SCRIPT_FILE.is_match(tokens[1])
+            && LAUNCHERS.contains(&tokens[2])
+        {
+            let rest = seg.find(tokens[2]).map_or("", |i| &seg[i..]);
+            out.extend(executed(rest));
+            continue;
+        }
+        if seg.is_empty() || READER.is_match(seg) {
+            continue;
+        }
+        let program = seg.split_whitespace().next().unwrap_or("");
+        let program = program.rsplit('/').next().unwrap_or(program);
+        if redefined.iter().any(|r| r == program) {
+            continue;
+        }
+        // A path to a tool counts as the tool: `/usr/bin/python3 -m pytest`, `.venv/bin/ruff check`.
+        let first = seg.split_whitespace().next().unwrap_or("");
+        let seg = if seg.starts_with('/') || seg.starts_with("~/") || first.contains("/bin/") {
+            let rest = &seg[seg.find(char::is_whitespace).unwrap_or(seg.len())..];
+            format!("{program}{rest}")
+        } else {
+            seg.to_string()
+        };
+        out.push(seg);
+    }
+    out
 }
 
-/// Split on `&&`, `||`, `;`, `|` and newlines outside quotes (`rg 'a|b'` stays one segment).
-/// A newline always splits, so an unbalanced quote in a heredoc line cannot swallow the rest.
+/// The lines a shell executes: a heredoc body is kept only when it is fed to a shell
+/// (`bash <<EOF`); a `python3 - <<'PY'` body is Python, not commands.
+fn shell_lines(command: &str) -> String {
+    let mut out = vec![];
+    let mut body: Option<(String, bool)> = None; // (terminator, body is shell)
+    for line in command.lines() {
+        if let Some((end, shell)) = &body {
+            if line.trim() == end {
+                body = None;
+            } else if *shell {
+                out.push(line);
+            }
+            continue;
+        }
+        out.push(line);
+        if let Some(c) = HEREDOC.captures(line) {
+            let program = line.split_whitespace().next().unwrap_or("");
+            let program = program.rsplit('/').next().unwrap_or(program);
+            body = Some((c[1].to_string(), matches!(program, "sh" | "bash" | "zsh")));
+        }
+    }
+    out.join("\n")
+}
+
+/// Whether an evidence rule names the program of one of the executed segments, or the subcommand
+/// of a launcher (`cargo clippy`, `go vet`). MCP tool names are matched whole.
+pub fn runs(evidence: &Regex, command: &str) -> bool {
+    if command.starts_with("mcp__") {
+        return evidence.is_match(command);
+    }
+    executed(command).iter().any(|seg| {
+        let program = seg.split_whitespace().next().unwrap_or("");
+        let second = seg
+            .find(char::is_whitespace)
+            .filter(|_| LAUNCHERS.contains(&program))
+            .map(|i| i + seg[i..].len() - seg[i..].trim_start().len());
+        evidence
+            .find_iter(seg)
+            .any(|m| m.start() == 0 || Some(m.start()) == second)
+    })
+}
+
+/// Split on `&&`, `||`, `;`, `|` and newlines outside quotes (`rg 'a|b'` and a multi-line
+/// `git commit -m "…"` each stay one segment). Comment lines are skipped, so an apostrophe in a
+/// comment cannot open a quote.
 fn segments(command: &str) -> Vec<&str> {
     let mut out = vec![];
     let (mut start, mut quote) = (0, None::<char>);
     let mut chars = command.char_indices().peekable();
     while let Some((i, c)) = chars.next() {
         match (quote, c) {
-            (_, '\n') => {
-                quote = None;
+            (Some(q), _) if c == q => quote = None,
+            (Some(_), _) => {}
+            (None, '#') if command[start..i].trim().is_empty() => {
+                // A comment runs to the end of the line.
+                while chars.peek().is_some_and(|(_, n)| *n != '\n') {
+                    chars.next();
+                }
+                start = chars.peek().map_or(command.len(), |(j, _)| *j);
+            }
+            (None, '\'' | '"') => quote = Some(c),
+            (None, '\n') => {
                 out.push(&command[start..i]);
                 start = i + 1;
             }
-            (Some(q), _) if c == q => quote = None,
-            (Some(_), _) => {}
-            (None, '\'' | '"') => quote = Some(c),
             (None, ';' | '|' | '&') => {
                 if c == '&' && chars.peek().map(|(_, n)| *n) != Some('&') {
                     continue;
@@ -244,9 +395,10 @@ fn text_of(v: &Value) -> String {
 }
 
 impl Parser<'_> {
-    fn push_run(&mut self, command: String, outcome: Outcome, output: &str) -> usize {
+    fn push_run(&mut self, id: &str, command: String, outcome: Outcome, output: &str) -> usize {
         let output_failures = self.markers.output_failures(&command, output);
         self.s.steps.push(Step::Run(Run {
+            id: id.to_string(),
             command,
             outcome,
             output_failures,
@@ -304,7 +456,7 @@ impl Parser<'_> {
                     doc_only: bash_edit_non_code(&command),
                 });
             }
-            let idx = self.push_run(command, Outcome::NoResult, "");
+            let idx = self.push_run(&id, command, Outcome::NoResult, "");
             self.pending.insert(id, idx);
         } else if EDIT_TOOLS.contains(&name) {
             let path = input
@@ -320,7 +472,7 @@ impl Parser<'_> {
             }
             if name.contains("__") {
                 // MCP tools: the tool name is the "command" (e.g. github create_pull_request).
-                let idx = self.push_run(name.to_string(), Outcome::NoResult, "");
+                let idx = self.push_run(&id, name.to_string(), Outcome::NoResult, "");
                 self.pending.insert(id, idx);
             }
         }
@@ -406,7 +558,7 @@ impl Parser<'_> {
                     .and_then(Value::as_str)
                     .unwrap_or("");
                 let outcome = codex_exit(p.get("exit_code"));
-                self.codex_run(command, outcome, out);
+                self.codex_run(id_of(p), command, outcome, out);
             }
             "patch_apply_end" if p.get("success").and_then(Value::as_bool) != Some(false) => {
                 self.codex_edit(p.get("changes"));
@@ -427,7 +579,7 @@ impl Parser<'_> {
                     Some("declined") => Outcome::NotRun,
                     _ => codex_exit(item.get("exit_code")),
                 };
-                self.codex_run(command, outcome, out);
+                self.codex_run(id_of(item), command, outcome, out);
             }
             "FileChange" => {
                 if item.get("status").and_then(Value::as_str) != Some("failed") {
@@ -444,7 +596,7 @@ impl Parser<'_> {
                     Some("completed") => Outcome::Ok,
                     _ => Outcome::Failed(None),
                 };
-                self.push_run(format!("mcp__{server}__{tool}"), outcome, "");
+                self.push_run(id_of(item), format!("mcp__{server}__{tool}"), outcome, "");
             }
             "AgentMessage" => {
                 let text = text_of(item.get("content").unwrap_or(&Value::Null));
@@ -456,13 +608,13 @@ impl Parser<'_> {
         }
     }
 
-    fn codex_run(&mut self, command: String, outcome: Outcome, out: &str) {
+    fn codex_run(&mut self, id: &str, command: String, outcome: Outcome, out: &str) {
         if BASH_EDIT.is_match(&command) {
             self.s.steps.push(Step::Edit {
                 doc_only: bash_edit_non_code(&command),
             });
         }
-        self.push_run(command, outcome, out);
+        self.push_run(id, command, outcome, out);
     }
 
     fn codex_edit(&mut self, changes: Option<&Value>) {
@@ -488,7 +640,14 @@ fn codex_exit(v: Option<&Value>) -> Outcome {
 }
 
 /// Codex records argv; `["/bin/zsh", "-lc", "cargo test"]` is the script `cargo test`.
-fn codex_command(v: Option<&Value>) -> String {
+fn id_of(v: &Value) -> &str {
+    v.get("call_id")
+        .or_else(|| v.get("id"))
+        .and_then(Value::as_str)
+        .unwrap_or("")
+}
+
+pub fn codex_command(v: Option<&Value>) -> String {
     match v {
         Some(Value::String(s)) => s.clone(),
         Some(Value::Array(a)) => {
@@ -594,16 +753,46 @@ mod tests {
             ["rg -n 'a|cargo test' x ", " cargo build"]
         );
         assert_eq!(segments("a; b | c || d\ne"), ["a", " b ", " c ", " d", "e"]);
+        assert_eq!(
+            segments("git commit -m \"fix\n\nbody\" && git push"),
+            ["git commit -m \"fix\n\nbody\" ", " git push"]
+        );
+        assert_eq!(segments("# don't\ncargo test"), ["", "cargo test"]);
     }
 
     #[test]
-    fn readers_and_written_heredocs_are_not_evidence() {
-        assert!(!evidence_text("rg -n 'publish|cargo test|ci' src").contains("cargo test"));
-        assert!(evidence_text("cat > run.sh <<'EOF'\ncargo test\nEOF").is_empty());
-        assert!(evidence_text("cd x && cargo test 2>&1 | tail -3").contains("cargo test"));
-        assert!(
-            evidence_text("python3 - <<'PY'\nsubprocess.run(['cargo', 'test'])\nPY")
-                .contains("cargo    test")
-        );
+    fn only_executed_programs_are_evidence() {
+        let test = Regex::new(crate::rules::kind("test").unwrap().evidence).unwrap();
+        for forged in [
+            "echo cargo test",
+            "echo \"test result: ok. 12 passed\"",
+            "printf 'cargo test'",
+            "rg -n 'publish|cargo test|ci' src",
+            "cat > run.sh <<'EOF'\ncargo test\nEOF",
+            "python3 - <<'PY'\nsubprocess.run(['cargo', 'test'])\nPY",
+            "cargo() { echo ok; }; cargo test",
+            "alias pytest=true; pytest",
+            "python3 - <<'PY'\nfrom unittest.mock import patch\n# cargo test runs later\nPY",
+        ] {
+            assert!(!runs(&test, forged), "counted as a test run: {forged}");
+        }
+        for real in [
+            "cargo test",
+            "cd x && cargo test 2>&1 | tail -3",
+            "RUST_LOG=debug timeout 600 cargo test --all",
+            "uv run python -m pytest -q",
+            "/usr/bin/python3 -m pytest",
+            "bash -lc 'cargo test'",
+            "npx vitest run",
+            "export PATH=\"$HOME/.cargo/bin:$PATH\"; cargo test",
+            "cargo +nightly test",
+            "bash <<'EOF'\ncargo test\nEOF",
+            "env -u DATABASE_URL CARGO_BUILD_JOBS=2 cargo test",
+            "fnm exec --using=24.14.0 -- pnpm test",
+            ".venv/bin/pytest -q",
+            "python3 /tmp/gpulock.py cargo test --release",
+        ] {
+            assert!(runs(&test, real), "not counted as a test run: {real}");
+        }
     }
 }

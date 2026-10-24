@@ -27,7 +27,10 @@ fn claude_install_keeps_existing_settings_and_is_idempotent() {
 
     let (code, out) = install(&["--project", dir.to_str().unwrap()]);
     assert_eq!(code, 0, "{out}");
-    assert!(out.contains("added Stop and SubagentStop hook"), "{out}");
+    assert!(
+        out.contains("added Stop, SubagentStop, PostToolUse, PostToolUseFailure hooks"),
+        "{out}"
+    );
     let after = std::fs::read_to_string(&settings).unwrap();
     let v: serde_json::Value = serde_json::from_str(&after).unwrap();
     assert_eq!(v["model"], "opus");
@@ -61,7 +64,7 @@ fn dry_run_writes_nothing_and_codex_gets_stop_only() {
     let dir = temp_project("codex");
     let (code, out) = install(&["--codex", "--project", dir.to_str().unwrap(), "--dry-run"]);
     assert_eq!(code, 0, "{out}");
-    assert!(out.contains("would add Stop to"), "{out}");
+    assert!(out.contains("would add Stop, PostToolUse to"), "{out}");
     assert!(!dir.join(".codex/hooks.json").exists());
 
     let (code, out) = install(&["--codex", "--project", dir.to_str().unwrap()]);

@@ -1,6 +1,7 @@
 //! receipt: a completion claim in an agent's final message needs a passing command in its transcript.
 
 pub mod claims;
+pub mod ledger;
 pub mod rules;
 pub mod transcript;
 
@@ -175,8 +176,7 @@ impl Checker {
             .rev()
             .find_map(|(idx, st)| match st {
                 Step::Run(r)
-                    if r.outcome != Outcome::NotRun
-                        && ev.is_match(&transcript::evidence_text(&r.command)) =>
+                    if r.outcome != Outcome::NotRun && transcript::runs(ev, &r.command) =>
                 {
                     Some((idx, r))
                 }
@@ -259,20 +259,20 @@ fn opaque_run_after_last_edit(s: &Session, evidence: &[Regex]) -> Option<usize> 
         .enumerate()
         .find_map(|(i, st)| match st {
             Step::Run(r) if r.outcome == Outcome::Ok && !r.command.contains("__") => {
-                let text = transcript::evidence_text(&r.command);
-                let program = text
-                    .split_whitespace()
-                    .find(|t| !t.contains('='))
+                let segs = transcript::executed(&r.command);
+                let program = segs
+                    .first()
+                    .and_then(|s| s.split_whitespace().next())
                     .unwrap_or("");
-                let known = evidence.iter().any(|e| e.is_match(&text));
-                (!text.trim().is_empty() && !known && !HOUSEKEEPING.contains(&program))
+                let known = evidence.iter().any(|e| transcript::runs(e, &r.command));
+                (!segs.is_empty() && !known && !HOUSEKEEPING.contains(&program))
                     .then_some(from + i + 1)
             }
             _ => None,
         })
 }
 
-/// Programs that cannot verify code. Read-only commands are already dropped by `evidence_text`.
+/// Programs that cannot verify code. Read-only commands are already dropped by `executed`.
 const HOUSEKEEPING: &[&str] = &[
     "git", "gh", "cd", "mkdir", "cp", "mv", "rm", "touch", "chmod", "ln", "ps", "pgrep", "pkill",
     "kill", "lsof", "sleep", "wait", "open", "which", "command", "type", "set", "export", "source",
@@ -294,8 +294,35 @@ fn short(cmd: &str) -> String {
 
 const MAX_LISTED: usize = 5;
 
+/// Where a verdict's runs and edits came from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Evidence {
+    /// receipt's own PostToolUse record of what ran.
+    Ledger,
+    /// The transcript: no record exists for this session.
+    Transcript,
+    /// The transcript: the record started after the session did, so it is incomplete.
+    PartialLedger,
+}
+
+impl Evidence {
+    pub fn note(self) -> &'static str {
+        match self {
+            Evidence::Ledger => {
+                "evidence: receipt's own record of the commands that ran in this session"
+            }
+            Evidence::Transcript => {
+                "evidence: the session transcript (no independent run record for this session)"
+            }
+            Evidence::PartialLedger => {
+                "evidence: the session transcript (the independent run record started mid-session)"
+            }
+        }
+    }
+}
+
 /// The message the agent receives when the stop is blocked.
-pub fn feedback(findings: &[Finding]) -> String {
+pub fn feedback(findings: &[Finding], evidence: Evidence) -> String {
     let blocking: Vec<&Finding> = findings.iter().filter(|f| f.blocks).collect();
     let n = blocking.len();
     let mut out = format!(
@@ -320,7 +347,8 @@ pub fn feedback(findings: &[Finding]) -> String {
         "FIX: for each item, either run that check once in the foreground and report its real result, ",
         "or reword only that sentence to say what was actually verified (for example \"tests not run\").\n",
         "If a check fails, report the failure. Fix it only if fixing it is part of the task you were given.\n",
-        "DO NOT: edit tests or config to make a check pass, add new checks or scripts, or re-run checks that are not listed above.",
+        "DO NOT: edit tests or config to make a check pass, add new checks or scripts, or re-run checks that are not listed above.\n",
     ));
+    out.push_str(&format!("({})", evidence.note()));
     out
 }

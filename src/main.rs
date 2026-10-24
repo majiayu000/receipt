@@ -5,13 +5,14 @@
 //!                                       report claims and verdicts; exit 1 if any claim would block
 //!   receipt audit [--show N] <transcript>...
 //!                                       replay every stop of past sessions: what would have been blocked
+//!   receipt record                      PostToolUse / PostToolUseFailure hook: append the call to the run ledger
 //!   receipt install [--codex] [--project DIR] [--dry-run]
-//!                                       add the hook to Claude Code (default) or Codex settings
+//!                                       add the hooks to Claude Code (default) or Codex settings
 
 mod install;
 
 use anyhow::{bail, Context, Result};
-use receipt::{feedback, transcript, Checker, Config, Finding, Verdict};
+use receipt::{feedback, ledger, transcript, Checker, Config, Evidence, Finding, Verdict};
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use std::io::Read;
@@ -19,6 +20,7 @@ use std::path::Path;
 use std::process::ExitCode;
 
 const USAGE: &str = "usage: receipt hook
+       receipt record
        receipt check <transcript.jsonl> [--message TEXT]
        receipt audit [--show N] <transcript.jsonl>...
        receipt install [--codex] [--project DIR] [--dry-run]";
@@ -27,6 +29,7 @@ fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let result = match args.first().map(String::as_str) {
         Some("hook" | "--hook") => hook(),
+        Some("record") => record(),
         Some("check") => check(&args[1..]),
         Some("audit") => audit(&args[1..]),
         Some("install") => install::run(&args[1..]),
@@ -85,11 +88,14 @@ fn hook() -> Result<ExitCode> {
         }
     }
     let raw = read(path)?;
-    let text = match message {
-        Some(m) => m,
-        None => transcript::parse_str(&raw, &checker.markers)?.last_text,
-    };
-    let findings = checker.check_transcript(&checker.claims(&text), &raw)?;
+    let (session, evidence) = with_ledger(
+        &checker,
+        &raw,
+        str_field("session_id"),
+        str_field("agent_id"),
+    )?;
+    let text = message.unwrap_or_else(|| session.last_text.clone());
+    let findings = checker.check(&checker.claims(&text), &session);
     let missing: Vec<&Finding> = findings
         .iter()
         .filter(|f| f.verdict != Verdict::Supported)
@@ -100,7 +106,7 @@ fn hook() -> Result<ExitCode> {
 
     let already_continued = input.get("stop_hook_active").and_then(Value::as_bool) == Some(true);
     if findings.iter().any(|f| f.blocks) && !already_continued {
-        eprintln!("{}", feedback(&findings));
+        eprintln!("{}", feedback(&findings, evidence));
         return Ok(ExitCode::from(2));
     }
     // Blocked once already this cycle, or only warnings: tell the user, let the agent stop.
@@ -120,6 +126,38 @@ fn hook() -> Result<ExitCode> {
     Ok(ExitCode::SUCCESS)
 }
 
+/// PostToolUse / PostToolUseFailure: append the call to the run ledger. Prints nothing.
+fn record() -> Result<ExitCode> {
+    if std::env::var("RECEIPT_OFF").is_ok_and(|v| v == "1") {
+        return Ok(ExitCode::SUCCESS);
+    }
+    let mut buf = String::new();
+    std::io::stdin()
+        .read_to_string(&mut buf)
+        .context("read hook input")?;
+    let input: Value = serde_json::from_str(&buf).context("hook input is not JSON")?;
+    ledger::record(&input)?;
+    Ok(ExitCode::SUCCESS)
+}
+
+/// The steps to judge: the run ledger when it covers the whole session, else the transcript.
+fn with_ledger(
+    checker: &Checker,
+    raw: &str,
+    session_id: Option<&str>,
+    agent_id: Option<&str>,
+) -> Result<(transcript::Session, Evidence)> {
+    let from_transcript = transcript::parse_str(raw, &checker.markers)?;
+    let Some(entries) = session_id.map(ledger::load).transpose()?.flatten() else {
+        return Ok((from_transcript, Evidence::Transcript));
+    };
+    if !ledger::covers(&entries, &from_transcript) {
+        return Ok((from_transcript, Evidence::PartialLedger));
+    }
+    let session = ledger::session(&entries, agent_id, &from_transcript, &checker.markers);
+    Ok((session, Evidence::Ledger))
+}
+
 fn check(args: &[String]) -> Result<ExitCode> {
     let mut path = None;
     let mut message = None;
@@ -134,11 +172,16 @@ fn check(args: &[String]) -> Result<ExitCode> {
     let path = path.context(USAGE)?;
     let checker = Checker::new(&Config::load(std::env::current_dir().ok().as_deref())?)?;
     let raw = read(&path)?;
-    let text = match message {
-        Some(m) => m,
-        None => transcript::parse_str(&raw, &checker.markers)?.last_text,
-    };
-    let findings = checker.check_transcript(&checker.claims(&text), &raw)?;
+    // Claude Code names transcripts <session_id>.jsonl; Codex rollouts end in the session id.
+    let stem = Path::new(&path)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("");
+    let session_id = stem.get(stem.len().saturating_sub(36)..).unwrap_or(stem);
+    let (session, evidence) = with_ledger(&checker, &raw, Some(session_id), None)?;
+    let text = message.unwrap_or_else(|| session.last_text.clone());
+    let findings = checker.check(&checker.claims(&text), &session);
+    println!("{}", evidence.note());
     if findings.is_empty() {
         println!("no completion claims in the final message");
         return Ok(ExitCode::SUCCESS);

@@ -104,6 +104,47 @@ The detail then names that step, so the user can see what may have done the veri
 
 The first attempt matched the claim's words verbatim against earlier tool outputs. On the replay it caught none of the real relays, because agents paraphrase or translate what they relay, so it was removed.
 
+## Independent run record
+
+`receipt record` runs as a PostToolUse hook (plus PostToolUseFailure on Claude Code). These are the payloads Claude Code 2.1.300 actually sent, captured on 2026-10-25 with a throwaway `--settings` file:
+
+- **Successful Bash** → `PostToolUse`: `session_id`, `tool_name: "Bash"`, `tool_input.command`, `tool_use_id`, `duration_ms`, and `tool_response` = `{stdout, stderr, interrupted, isImage, noOutputExpected}`. There is no exit-code field: success means 0.
+- **Non-zero exit** → `PostToolUseFailure`: `error: "Exit code 3"`, `is_interrupt`, `tool_response: null`.
+- **Calls inside a subagent** carry the **parent's** `session_id` plus `agent_id` and `agent_type`.
+
+Codex documents `PostToolUse` for Bash (failures included), `apply_patch` and MCP tools, with `tool_input` / `tool_response` but no exit-code field and no `agent_id`. That was not captured live. The recorder reads `exit_code` / `exitCode` or an "exit code N" phrase. Otherwise it records `unknown`, and the Stop check takes that run's outcome from the transcript.
+
+Each call becomes one JSON line in `$RECEIPT_STATE_DIR` / `$XDG_STATE_HOME/receipt` / `~/.local/state/receipt`, under `sessions/<session_id>.jsonl`. A line holds:
+
+- time, `tool_use_id` and `agent_id`;
+- for a run: the command (≤ 4,000 characters), `ok`/`failed`/`pending`/`unknown`, the exit code, and at most 20 output lines matching the failure markers or a success pattern (`test result:`, `N passed`, …);
+- for an edit: whether it touched only docs or scratch files.
+
+Each line is a single `O_APPEND` write, so parallel tool calls don't interleave.
+
+At Stop, the ledger replaces the transcript's runs and edits:
+
+- **Main stop:** every entry counts, subagents included.
+- **`SubagentStop`:** only entries with that `agent_id` count.
+- **Background runs** (`pending`) and `unknown` outcomes are resolved from the transcript by `tool_use_id`, falling back to the command.
+- **Partial ledger:** if the ledger does not contain the transcript's first command, it started mid-session (the recorder was installed later). The transcript is used instead, and the output says so. With no ledger at all, the transcript is used too.
+
+Cost: `receipt record` takes p50 3.5 ms / p95 5.8 ms per Bash call with 300 lines of output (2.6 ms per edit), and about 116 bytes of ledger per call.
+
+### Executed programs only
+
+A recorded command string is still just text: the ledger would happily store `echo cargo test`. So in both modes, evidence must be the **program a shell segment executes**. `transcript::executed` works as follows:
+
+1. Split the command into segments on `&&`, `||`, `;`, `|` and newline, respecting quotes.
+2. Peel wrappers: environment assignments, `time`, `env`, `sudo`, `timeout N`, `uv run`, `npx`, `python -m`, `bash -c '…'` (recursively).
+3. Drop read-only and print segments (`echo`, `printf`, `cat`, `rg`, …).
+4. Drop a heredoc written to a file.
+5. Drop any segment whose program the same line redefines as a shell function or alias.
+
+An evidence rule must then match at the very start of a remaining segment. The heredoc-harness case from the earlier eval (`subprocess.run(["cargo", "test"])`) no longer counts as evidence; it is now an unrecognised run, which downgrades a block to a warning.
+
+Not covered: a `PATH` override, or a fake tool script on disk. A `PATH` rule would also reject the common `export PATH="$HOME/.cargo/bin:$PATH"; cargo test`, so it was left out.
+
 ## Recognising claims
 
 ### Text preparation

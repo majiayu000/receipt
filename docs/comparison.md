@@ -9,13 +9,15 @@ Checked 2026-10-22. Stars, language, license and creation date come from the Git
 | Stars | new | 0 | 3 | 17 | 51 | 6 | 0 | 0 |
 | Language | Rust (one binary) | Python | TypeScript | Go | Python | Shell | TypeScript (Claude Code mod) | Python |
 | License | MIT | Apache-2.0 | MIT | Apache-2.0 | Apache-2.0 | — | MIT | — |
-| How it decides | transcript: claim vs. recorded runs | transcript: claim vs. recorded runs | transcript + git diff | own hook recorder; failure words in final message | caller-supplied structured claims and evidence | wrapper records runs; Stop gate | LLM judge (Sonnet) | transcript: any test output this turn |
+| How it decides | its own PostToolUse run record (transcript as fallback): claim vs. recorded runs | transcript: claim vs. recorded runs | transcript + git diff | own hook recorder; failure words in final message | caller-supplied structured claims and evidence | wrapper records runs; Stop gate | LLM judge (Sonnet) | transcript: any test output this turn |
 | Needs an LLM | no | no | no | no | no | no | yes | no |
 | Agent workflow unchanged | yes | yes | yes | yes | no (you build claim objects) | no (checks go through its wrapper) | yes | yes |
 | Blocks the stop | yes, once per cycle | yes | opt-in `--strict` | no (one-line notice) | returns `blocked` to your code | yes | never | yes, once |
 | Claude Code | Stop + SubagentStop | Stop + SubagentStop | Stop | yes | — | Stop | yes | yes |
 | Codex | Stop hook (blocks) | — | reads transcripts, no block | — | — | AGENTS.md rule only | — | yes |
 | Chinese claims | yes, incl. enumerations ("格式、Clippy、测试编译均通过") | — (English only) | — | — | — | — | "any language" (LLM) | — |
+| Independent record of what ran | yes: PostToolUse ledger with real exit codes, subagents included | no (transcript) | no (transcript) | yes: own hook recorder | n/a | yes: wrapper capture with sha256 | no | no |
+| `echo "12 passed"` / `echo cargo test` not accepted | yes (only executed programs count) | yes (adversarial set) | — | — | n/a | yes (exit code is captured) | LLM judgement | — |
 | Stale run (edited after the check) | yes | yes | — | — | — | needs a fresh capture | yes | — |
 | Exit 0 but output says failed (`\| tail`, `\|\| true`) | yes | yes | — | — | — | capture keeps the real exit code | — | — |
 | Background runs | waits for the completion notification | background runs don't count | — | — | — | — | — | — |
@@ -35,11 +37,12 @@ Checked 2026-10-22. Stars, language, license and creation date come from the Git
    - Replay of 1,939 real stops on the author's machine: 14 would be blocked, about 0.7% of stops. A hand review judged 4 of those defensible, 1 unclear and 9 false blocks.
    - The README lists every error class.
    - Other projects either publish no numbers or measure only synthetic fixtures (proof-of-done says so itself).
-4. **Bias toward silence.** It warns instead of blocking when an unrecognised command ran after the last edit, or when the session is relaying other agents' reports. Failed runs always block.
+4. **Its own record of what ran.** A PostToolUse hook logs every command's exit code, subagents included. At Stop that ledger, not the transcript text, is the evidence, and only executed programs count. Echoed results, written heredocs and redefined functions are not evidence.
+5. **Bias toward silence.** It warns instead of blocking when an unrecognised command ran after the last edit, or when the session is relaying other agents' reports. Failed runs always block.
 
 ## Where others go further
 
-- **proof-of-done** resists more gaming: fake `echo "12 passed"`, a redefined `pytest`, `PATH` tricks. It also handles partial re-runs (`-k`, `--lf`) after a failed full run. receipt does not try to resist an adversarial agent.
+- **proof-of-done** resists more gaming. Like receipt, it rejects a fake `echo "12 passed"` and a redefined `pytest`. Unlike receipt, it also catches `PATH` tricks and partial re-runs (`-k`, `--lf`) after a failed full run.
 - **groundtruth** checks claims about files and symbols against the git diff ("added `validateInput`"). receipt only checks claims about commands.
 - **agent-done-or-not**, **tausik-core** and **Lians** give stronger guarantees: hashed or signed receipts bound to the commit. The price is that the agent must run checks through their wrapper or task system.
 - **rashomon** records every tool call independently of the transcript. That includes subagents, and calls another hook rewrote.

@@ -21,14 +21,23 @@ pub fn run(args: &[String]) -> Result<ExitCode> {
         }
     }
     let path = target(codex, project.as_deref())?;
-    // Claude Code also checks subagents; Codex has no subagent transcript to check.
-    let events: &[&str] = if codex {
-        &["Stop"]
-    } else {
-        &["Stop", "SubagentStop"]
-    };
     let exe = std::env::current_exe().context("locate the receipt binary")?;
-    let command = format!("{} hook", shell_quote(&exe.to_string_lossy()));
+    let exe = shell_quote(&exe.to_string_lossy());
+    // (event, matcher, subcommand). Stop hooks judge; PostToolUse hooks keep the run record.
+    // Claude Code reports a non-zero exit as PostToolUseFailure; Codex runs PostToolUse for both.
+    let wanted: &[(&str, Option<&str>, &str)] = if codex {
+        &[
+            ("Stop", None, "hook"),
+            ("PostToolUse", Some("Bash|apply_patch|mcp__.*"), "record"),
+        ]
+    } else {
+        &[
+            ("Stop", None, "hook"),
+            ("SubagentStop", None, "hook"),
+            ("PostToolUse", Some(CLAUDE_RECORD_MATCHER), "record"),
+            ("PostToolUseFailure", Some(CLAUDE_RECORD_MATCHER), "record"),
+        ]
+    };
 
     let existing = match std::fs::read_to_string(&path) {
         Ok(s) if !s.trim().is_empty() => Some(s),
@@ -41,7 +50,7 @@ pub fn run(args: &[String]) -> Result<ExitCode> {
             .with_context(|| format!("{} is not valid JSON", path.display()))?,
         None => json!({}),
     };
-    let added = add_hooks(&mut settings, events, &command)
+    let added = add_hooks(&mut settings, wanted, &exe)
         .with_context(|| format!("update {}", path.display()))?;
     if added.is_empty() {
         println!("receipt is already installed in {}", path.display());
@@ -51,7 +60,7 @@ pub fn run(args: &[String]) -> Result<ExitCode> {
     if dry_run {
         println!(
             "would add {} to {}:\n{out}",
-            added.join(" and "),
+            added.join(", "),
             path.display()
         );
         return Ok(ExitCode::SUCCESS);
@@ -66,7 +75,7 @@ pub fn run(args: &[String]) -> Result<ExitCode> {
         println!("backup: {}", backup.display());
     }
     std::fs::write(&path, out).with_context(|| format!("write {}", path.display()))?;
-    println!("added {} hook to {}", added.join(" and "), path.display());
+    println!("added {} hooks to {}", added.join(", "), path.display());
     if codex {
         println!("Codex runs a new hook only after you trust it: open Codex and run /hooks.");
     }
@@ -93,8 +102,14 @@ fn target(codex: bool, project: Option<&Path>) -> Result<PathBuf> {
     })
 }
 
+const CLAUDE_RECORD_MATCHER: &str = "Bash|Edit|Write|MultiEdit|NotebookEdit|mcp__.*";
+
 /// Append a receipt group to each event that lacks one. Returns the events changed.
-fn add_hooks(settings: &mut Value, events: &[&str], command: &str) -> Result<Vec<String>> {
+fn add_hooks(
+    settings: &mut Value,
+    wanted: &[(&str, Option<&str>, &str)],
+    exe: &str,
+) -> Result<Vec<String>> {
     let root = settings
         .as_object_mut()
         .context("settings must be a JSON object")?;
@@ -104,25 +119,29 @@ fn add_hooks(settings: &mut Value, events: &[&str], command: &str) -> Result<Vec
         .as_object_mut()
         .context("`hooks` must be an object")?;
     let mut added = vec![];
-    for event in events {
+    for (event, matcher, sub) in wanted {
         let groups = hooks
             .entry(*event)
             .or_insert_with(|| json!([]))
             .as_array_mut()
             .with_context(|| format!("`hooks.{event}` must be an array"))?;
+        let suffix = format!(" {sub}");
         let present = groups.iter().any(|g| {
             g.get("hooks").and_then(Value::as_array).is_some_and(|hs| {
                 hs.iter().any(|h| {
                     h.get("command")
                         .and_then(Value::as_str)
-                        .is_some_and(|c| c.contains("receipt") && c.trim_end().ends_with(" hook"))
+                        .is_some_and(|c| c.contains("receipt") && c.trim_end().ends_with(&suffix))
                 })
             })
         });
         if !present {
-            groups.push(
-                json!({ "hooks": [{ "type": "command", "command": command, "timeout": 10 }] }),
-            );
+            let hook =
+                json!({ "type": "command", "command": format!("{exe}{suffix}"), "timeout": 10 });
+            groups.push(match matcher {
+                Some(m) => json!({ "matcher": m, "hooks": [hook] }),
+                None => json!({ "hooks": [hook] }),
+            });
             added.push(event.to_string());
         }
     }

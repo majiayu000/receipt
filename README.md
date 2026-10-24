@@ -8,10 +8,11 @@
 
 **receipt is a Claude Code hook and Codex Stop hook for agent verification.** When a coding agent ends its turn saying "tests pass", "build succeeds", "committed" or "已提交", receipt checks the session transcript for the command that proves it. If that command never ran, failed, or ran before the last code edit, receipt blocks the hallucinated completion once. The agent then either runs the check or rewords the claim.
 
-- **Deterministic.** No LLM and no network. One Rust binary that reads only the transcript.
+- **Deterministic.** No LLM and no network. One Rust binary.
+- **Its own run record.** A PostToolUse hook logs every command's real exit code to a local ledger, so an agent can't pass off `echo "12 passed"` as a test run. Subagents are covered too.
 - **Claude Code and Codex.** `Stop` / `SubagentStop` on Claude Code, `Stop` on Codex. Both transcript formats are parsed.
 - **English and Chinese claims**, including Chinese summaries that list several checks before one verb ("格式、严格 Clippy、release 测试编译均通过").
-- **Fast.** p95 73 ms on a 102 MB transcript, about 12 ms when the final message makes no claim.
+- **Fast.** The Stop check takes p95 73 ms on a 102 MB transcript, about 12 ms when the final message makes no claim. Recording costs about 4 ms per tool call.
 - **Measured on real sessions**, not only synthetic fixtures. See [Evaluation](#evaluation).
 
 ## What a block looks like
@@ -42,7 +43,7 @@ sudo mv receipt-aarch64-apple-darwin/receipt /usr/local/bin/
 #    …or build it
 cargo install --git https://github.com/majiayu000/receipt
 
-# 2. Add the hook (merges into your settings, keeps a backup; --dry-run shows the result first)
+# 2. Add the hooks (Stop + the PostToolUse recorder; merges into your settings, keeps a backup; --dry-run shows the result first)
 receipt install                    # Claude Code: ~/.claude/settings.json
 receipt install --codex            # Codex: ~/.codex/hooks.json, then run /hooks once to trust it
 receipt install --project .        # this repository only (.claude/settings.json)
@@ -60,7 +61,11 @@ Claude Code (`~/.claude/settings.json` or `.claude/settings.json`):
 {
   "hooks": {
     "Stop": [{ "hooks": [{ "type": "command", "command": "receipt hook", "timeout": 10 }] }],
-    "SubagentStop": [{ "hooks": [{ "type": "command", "command": "receipt hook", "timeout": 10 }] }]
+    "SubagentStop": [{ "hooks": [{ "type": "command", "command": "receipt hook", "timeout": 10 }] }],
+    "PostToolUse": [{ "matcher": "Bash|Edit|Write|MultiEdit|NotebookEdit|mcp__.*",
+                      "hooks": [{ "type": "command", "command": "receipt record", "timeout": 10 }] }],
+    "PostToolUseFailure": [{ "matcher": "Bash|Edit|Write|MultiEdit|NotebookEdit|mcp__.*",
+                             "hooks": [{ "type": "command", "command": "receipt record", "timeout": 10 }] }]
   }
 }
 ```
@@ -68,7 +73,11 @@ Claude Code (`~/.claude/settings.json` or `.claude/settings.json`):
 Codex (`~/.codex/hooks.json` or `<repo>/.codex/hooks.json`):
 
 ```json
-{ "hooks": { "Stop": [{ "hooks": [{ "type": "command", "command": "receipt hook", "timeout": 10 }] }] } }
+{ "hooks": {
+    "Stop": [{ "hooks": [{ "type": "command", "command": "receipt hook", "timeout": 10 }] }],
+    "PostToolUse": [{ "matcher": "Bash|apply_patch|mcp__.*",
+                      "hooks": [{ "type": "command", "command": "receipt record", "timeout": 10 }] }]
+} }
 ```
 
 To try it for one run without touching your settings: `claude --settings ./receipt-settings.json`.
@@ -116,6 +125,26 @@ A failed run always blocks.
 | A claim is UNSUPPORTED, CONTRADICTED or STALE | exit 2 with the feedback above. Claude Code and Codex both continue the turn |
 | Already blocked once in this stop cycle (`stop_hook_active`) | exit 0 plus a `systemMessage` for you: "receipt: still unverified: …" |
 | receipt itself fails (unreadable transcript, bad input) | exit 1: a visible hook error, never a block |
+
+### Its own run record
+
+`receipt record` is the recorder. It runs as a PostToolUse / PostToolUseFailure hook and appends every Bash call, edit and MCP call to `~/.local/state/receipt/sessions/<session_id>.jsonl`. Each line holds the command, the exit code the host reported, and at most 20 result lines (test counts, failure markers). Full output is never stored.
+
+At Stop, the ledger is the evidence:
+
+- A passing run that appears in the transcript but not in the ledger does not count.
+- Subagent calls arrive with the parent's session id, so a subagent's test run backs the parent's claim. On `SubagentStop`, only that subagent's own calls count.
+- If there is no ledger, or it started mid-session, receipt falls back to the transcript. The feedback and `receipt check` then say there was no independent run record.
+
+In both modes a run only counts when the test tool is the program a shell segment actually executes. These are not test runs:
+
+- `echo cargo test`, `echo "12 passed"`, `printf …`;
+- `rg 'cargo test'`;
+- a heredoc written to a file;
+- `subprocess.run(["cargo", "test"])` inside a Python string;
+- `cargo() { echo ok; }; cargo test`, `alias pytest=true`.
+
+Wrappers are seen through: `timeout 60 cargo test`, `uv run python -m pytest`, `bash -lc 'cargo test'`.
 
 Full rules: [docs/design.md](docs/design.md).
 
@@ -196,6 +225,15 @@ The 9 false blocks:
 - a sed-edited notes file classed as code;
 - a "test entry reference check".
 
+**After adding the run record (2026-10-25).** Evidence now has to be the program a command actually executes. The labelled eval numbers above did not change. On a replay of the same 2,007 stops (the sessions above plus later ones), blocks went from 16 to 17:
+
+- **3 no longer blocked:** the storyboard false block, and two verdicts that had rested on Python-heredoc harness text.
+- **4 newly blocked**, by hand review:
+  - a failing `verify.py` run;
+  - an edit after the last real check;
+  - a claim whose only "evidence" had been a commit message mentioning `cargo test`;
+  - one false block, a `cat` of an old log containing `FAILED`.
+
 The first version of the rules blocked 225 of these stops. Most of those came from projects verifying through their own scripts, which is why the unrecognised-runner rule and `[evidence]` exist.
 
 ## Limits
@@ -203,7 +241,8 @@ The first version of the rules blocked 225 of these stops. Most of those came fr
 - Out of the box, receipt only knows common toolchains. Add your own runners under `[evidence]`.
 - A paraphrased relay ("fixed three bugs over there") in a session without visible agent reports is still blocked.
 - A filtered re-run (`cargo test foo`) after a failed full run satisfies "all tests pass".
-- receipt catches the sincere, unchecked "done". It does not resist an adversarial agent: `echo cargo test` matches.
+- Faking with echo, written heredocs and redefined functions is caught. Determined gaming still is not: a `PATH` override or a fake `cargo` script on disk, or tests edited to pass (`.skip`, loosened asserts; planned next).
+- The Codex recorder parses the documented PostToolUse fields, but there was no live Codex payload capture. When Codex reports no exit code, the outcome comes from the transcript.
 
 ## Docs
 

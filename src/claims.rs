@@ -70,7 +70,7 @@ static ZH_ITEM_SPLIT: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"、|和|及|与|以及|或|／|/|\+").unwrap());
 // Enumerated items that name a check but not a claim kind's result (测试名核验, 测试注册检查).
 static ZH_ITEM_SKIP: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"核验|注册|方法|计划|重点|名单|解析|准备").unwrap());
+    LazyLock::new(|| Regex::new(r"核验|注册|方法|计划|重点|名单|解析|准备|脚本|说明").unwrap());
 // What follows the predicate makes it a rate or a general statement (通过率, 编译通过不代表…).
 static ZH_NOT_RESULT: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^(率|只算|只是|不代表|不等于|并不|不能|后|之后|以后)").unwrap());
