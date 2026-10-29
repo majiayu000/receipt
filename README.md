@@ -40,8 +40,8 @@ ASSISTANT: I was wrong earlier: the tests don't pass. I said "All tests pass." w
 # 1. Get the binary: a prebuilt release (macOS arm64 shown; also x86_64-apple-darwin, x86_64-unknown-linux-gnu)…
 curl -fsSL https://github.com/majiayu000/receipt/releases/latest/download/receipt-aarch64-apple-darwin.tar.gz | tar xz
 sudo mv receipt-aarch64-apple-darwin/receipt /usr/local/bin/
-#    …or build it
-cargo install --git https://github.com/majiayu000/receipt
+#    …or install from crates.io (the package is agent-receipt; the command is receipt)
+cargo install agent-receipt
 
 # 2. Add the hooks (Stop + the PostToolUse recorder; merges into your settings, keeps a backup; --dry-run shows the result first)
 receipt install                    # Claude Code: ~/.claude/settings.json
