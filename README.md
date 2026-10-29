@@ -37,7 +37,9 @@ ASSISTANT: I was wrong earlier: the tests don't pass. I said "All tests pass." w
 ## Quick start
 
 ```bash
-# 1. Get the binary: a prebuilt release (macOS arm64 shown; also x86_64-apple-darwin, x86_64-unknown-linux-gnu)…
+# 1. Get the binary: Homebrew (macOS, Linux x86_64)…
+brew install majiayu000/tap/receipt
+#    …or a prebuilt release (macOS arm64 shown; also x86_64-apple-darwin, x86_64-unknown-linux-gnu)…
 curl -fsSL https://github.com/majiayu000/receipt/releases/latest/download/receipt-aarch64-apple-darwin.tar.gz | tar xz
 sudo mv receipt-aarch64-apple-darwin/receipt /usr/local/bin/
 #    …or install from crates.io (the package is agent-receipt; the command is receipt)
